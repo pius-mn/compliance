@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+@theme {
+}
+
+@variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  .dark {
+    @apply bg-slate-950 text-slate-50;
+  }
+}
+
+/* ── Native mobile touch & safe-area tweaks ── */
+@media (max-width: 1023px) {
+  .mobile-scrolling {
+    height: 100%;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Prevent iOS zoom on input focus — 16px minimum on mobile only */
+@media (max-width: 639px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Touch-friendly interactive elements */
+@layer utilities {
+  .tap-highlight-transparent {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .touch-callout-none {
+    -webkit-touch-callout: none;
+  }
+
+  .touch-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  .touch-manipulation {
+    touch-action: manipulation;
+  }
+
+  .safe-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom, 0px), 0.5rem);
+  }
+
+  .safe-top {
+    padding-top: max(env(safe-area-inset-top, 0px), 0.5rem);
+  }
+
+  .safe-left {
+    padding-left: max(env(safe-area-inset-left, 0px), 0.5rem);
+  }
+
+  .safe-right {
+    padding-right: max(env(safe-area-inset-right, 0px), 0.5rem);
+  }
+
+  .min-touch {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .min-touch-h {
+    min-height: 44px;
+  }
+
+  .min-touch-w {
+    min-width: 44px;
+  }
+
+  .active-scale-95:active {
+    transform: scale(0.95);
+  }
+
+  .active-scale-98:active {
+    transform: scale(0.98);
+  }
+}
+
+/* Bottom-sheet style for centered modals on mobile (max 639px = sm breakpoint) */
+@media (max-width: 639px) {
+  .modal-mobile-bottom {
+    align-items: flex-end !important;
+    padding: 0 !important;
+  }
+
+  .modal-mobile-bottom > div {
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    max-height: 85vh;
+    border-radius: 24px 24px 0 0;
+    animation: buff-slide-up 0.3s ease-out;
+  }
+}
+
+/* Bottom-sheet style for right-side panels/drawers on mobile */
+@media (max-width: 639px) {
+  .panel-mobile-bottom {
+    align-items: flex-end !important;
+    justify-content: flex-end !important;
+    padding: 0 !important;
+  }
+
+  .panel-mobile-bottom > div {
+    width: 100% !important;
+    max-height: 85vh !important;
+    height: auto !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-radius: 24px 24px 0 0 !important;
+    animation: buff-slide-up 0.3s ease-out;
+  }
+}
+
+@keyframes buff-slide-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 767px) {
+  .table-mobile-cards {
+    display: block;
+  }
+
+  .table-mobile-cards thead {
+    display: none;
+  }
+
+  .table-mobile-cards tbody,
+  .table-mobile-cards tr,
+  .table-mobile-cards td {
+    display: block;
+  }
+
+  .table-mobile-cards tr {
+    margin-bottom: 0.75rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 0.75rem;
+    background: white;
+  }
+
+  .table-mobile-cards td {
+    padding: 0.25rem 0;
+    border: none;
+  }
+}
