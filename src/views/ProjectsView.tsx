@@ -108,7 +108,7 @@ export default function ProjectsView(props: ProjectsViewProps) {
   const selectedProject = projects.find(p => p.id === selectedProjectId) || null;
 
   return (
-    <div className="flex-1 flex flex-col space-y-6 p-4 sm:p-6 lg:p-8 overflow-y-auto max-w-[1600px] w-full mx-auto">
+    <div className="flex-1 flex flex-col space-y-6 p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8 overflow-y-auto max-w-[1600px] w-full mx-auto">
       {/* Clean & Elegant Header */}
       <div className="flex items-center justify-between gap-4 pb-2 border-b border-slate-100">
         <div className="flex flex-col space-y-1">
@@ -171,7 +171,7 @@ export default function ProjectsView(props: ProjectsViewProps) {
       {/* Reusable Create/Edit Project Modal Overlay */}
       {(showAddProject || editingProject) && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-[200] flex items-center justify-center p-4 sm:p-4 modal-mobile-bottom">
-          <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-xl overflow-hidden shadow-xl animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-2xl border border-slate-200 w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-xl animate-in fade-in zoom-in-95 duration-200">
             <form
               onSubmit={async (e) => {
                 if (editingProject) {

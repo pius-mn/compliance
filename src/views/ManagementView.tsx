@@ -83,7 +83,7 @@ const ManagementView: React.FC<ManagementViewProps> = ({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-8 animate-fade-in bg-white rounded-2xl border border-slate-100 shadow-sm">
+    <div className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8 space-y-8 animate-fade-in bg-white rounded-2xl border border-slate-100 shadow-sm">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-rose-100 pb-5 gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-900 tracking-tight flex items-center gap-2">

@@ -8,6 +8,76 @@
 @layer base {
   .dark {
     @apply bg-slate-950 text-slate-50;
+    background-color: #020617; /* slate-950 */
+    color: #f8fafc; /* slate-50 */
+  }
+
+  /* Global Dark Mode Overrides to ensure high contrast (4.5:1+) */
+  .dark .bg-white,
+  .dark .bg-white\/90 {
+    background-color: #0f172a !important; /* slate-900 */
+  }
+
+  .dark .bg-slate-50,
+  .dark .bg-slate-50\/70,
+  .dark .bg-slate-50\/50 {
+    background-color: #1e293b !important; /* slate-800 */
+  }
+
+  .dark .bg-slate-100 {
+    background-color: #1e293b !important;
+  }
+
+  .dark .border-slate-100,
+  .dark .border-slate-200,
+  .dark .border-transparent {
+    border-color: #1e293b !important; /* slate-800 */
+  }
+
+  .dark .divide-slate-200,
+  .dark .divide-slate-100,
+  .dark .divide-slate-50,
+  .dark .divide-slate-150 {
+    border-color: #1e293b !important;
+  }
+
+  .dark .text-slate-900,
+  .dark .text-slate-800,
+  .dark .text-slate-700 {
+    color: #f8fafc !important; /* slate-50 */
+  }
+
+  .dark .text-slate-600,
+  .dark .text-slate-500 {
+    color: #cbd5e1 !important; /* slate-300 - exceeds 4.5:1 contrast */
+  }
+
+  .dark .text-slate-400 {
+    color: #94a3b8 !important; /* slate-400 - exceeds 4.5:1 contrast */
+  }
+
+  .dark input,
+  .dark select,
+  .dark textarea {
+    background-color: #1e293b !important;
+    color: #f8fafc !important;
+    border-color: #334155 !important;
+  }
+
+  .dark input::placeholder,
+  .dark textarea::placeholder {
+    color: #64748b !important;
+  }
+
+  /* Charts dark mode accessibility overrides */
+  .dark .recharts-cartesian-axis-tick text,
+  .dark .recharts-legend-item-text {
+    fill: #cbd5e1 !important;
+  }
+  .dark .recharts-default-tooltip {
+    background-color: #0f172a !important;
+    border-color: #1e293b !important;
+    color: #f8fafc !important;
   }
 }
 
@@ -17,6 +87,7 @@
     height: 100%;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
+    padding-bottom: 96px !important;
   }
 }
 

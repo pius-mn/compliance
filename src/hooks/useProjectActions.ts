@@ -1,5 +1,5 @@
 import React from "react";
-import { Project, Milestone, User } from "../types";
+import { Project, Milestone } from "../types";
 import { safeJson, safeString } from "../utils/helpers";
 import { apiFetch, apiFetchJson } from "../utils/apiFetch";
 import type { CollectionKey } from "../utils/dataSync";
@@ -54,7 +54,7 @@ export function useProjectActions(
     contractors,
   } = states;
 
-  const fetchMilestones = async (projId: number | string, _customUser?: User | null) => {
+  const fetchMilestones = async (projId: number | string) => {
     try {
       const res = await apiFetch(`${API_BASE}/projects/${projId}/milestones`);
       if (res.ok) {

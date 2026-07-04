@@ -4,7 +4,6 @@ import {
   Download, 
   RefreshCw, 
   SlidersHorizontal, 
-  AlertCircle, 
   CheckCircle, 
   TrendingUp, 
   Printer, 
@@ -14,7 +13,8 @@ import {
   Leaf,
   Clock,
   AlertTriangle,
-  CheckCircle2
+  CheckCircle2,
+  LucideIcon
 } from "lucide-react";
 import { PaginationControls } from "../components/PaginationControls";
 import { DailyNotesHistory } from "../components/DailyNotesHistory";
@@ -53,6 +53,138 @@ export interface ReportingViewProps {
   onTriggerScan?: () => void;
   onResolveFlag?: (flagId: number, comments: string) => void;
   milestones?: Milestone[];
+}
+
+// --- Shared style/data helpers -------------------------------------------
+// These pull out logic that used to be re-derived inline for every row
+// (compliance flag icon/severity colors, milestone badges, clearance
+// evaluation, expiration urgency tiers) plus a couple of small reusable
+// pieces (LabeledSelect, KpiCard) so the filter panel and KPI grid aren't
+// five/six near-identical blocks of JSX.
+
+function getFlagIconMeta(standard: string): { Icon: LucideIcon; color: string } {
+  if (standard === "OSHA") return { Icon: Shield, color: "text-red-500 dark:text-red-400" };
+  if (standard === "EPA" || standard === "NEMA") return { Icon: Leaf, color: "text-emerald-500 dark:text-emerald-400" };
+  if (standard === "Regulatory") return { Icon: Clock, color: "text-indigo-500 dark:text-indigo-400" };
+  return { Icon: Info, color: "text-slate-500 dark:text-slate-400" };
+}
+
+function getSeverityBadgeClasses(severity: string) {
+  if (severity === "High") {
+    return "bg-red-50 text-red-700 border border-red-150 font-extrabold dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20";
+  }
+  if (severity === "Medium") {
+    return "bg-amber-50 text-amber-700 border border-amber-150 font-bold dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20";
+  }
+  if (severity === "Low") {
+    return "bg-blue-50 text-blue-700 border border-blue-150 font-medium dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20";
+  }
+  return "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+}
+
+function getMilestoneBadgeClasses(status: string) {
+  if (status === "In Progress") return "bg-blue-50 text-blue-700 border border-blue-150 dark:bg-blue-500/10 dark:text-blue-400 dark:border-blue-500/20";
+  if (status === "Blocked") return "bg-red-50 text-red-700 border border-red-150 animate-pulse dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20";
+  if (status === "Completed") return "bg-emerald-50 text-emerald-700 border border-emerald-150 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20";
+  return "bg-slate-50 text-slate-500 border border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700";
+}
+
+function getClearanceEvaluation(averageScore: number): { status: string; style: string } {
+  if (averageScore < 70) {
+    return { status: "Suspended Site Access", style: "bg-red-50 text-red-800 border-red-150 dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20" };
+  }
+  if (averageScore < 80) {
+    return { status: "Needs Inspection", style: "bg-amber-50 text-amber-800 border-amber-150 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20" };
+  }
+  return { status: "Cleared", style: "bg-emerald-50 text-emerald-800 border-emerald-150 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20" };
+}
+
+function getUrgencyMeta(remainingDays: number, isExpired: boolean): { badge: string; label: string } {
+  if (isExpired) {
+    return {
+      badge: "bg-red-50 text-red-700 border border-red-150 font-black dark:bg-red-500/10 dark:text-red-400 dark:border-red-500/20",
+      label: "CRITICAL: EXPIRED",
+    };
+  }
+  if (remainingDays <= 15) {
+    return {
+      badge: "bg-amber-50 text-amber-700 border border-amber-150 font-bold dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20",
+      label: "IMMEDIATE SLA EXPIRY",
+    };
+  }
+  if (remainingDays <= 30) {
+    return {
+      badge: "bg-yellow-50 text-yellow-700 border border-yellow-150 font-semibold dark:bg-yellow-500/10 dark:text-yellow-400 dark:border-yellow-500/20",
+      label: "WARNING WINDOW",
+    };
+  }
+  return {
+    badge: "bg-green-50 text-green-700 border border-green-150 dark:bg-green-500/10 dark:text-green-400 dark:border-green-500/20",
+    label: "Low Risk",
+  };
+}
+
+/** Safely formats a date-ish value, falling back to the raw string then "Unknown". */
+function formatDateSafe(value: unknown): string {
+  try {
+    return new Date(value as string).toLocaleString();
+  } catch {
+    try {
+      return safeString(value);
+    } catch {
+      return "Unknown";
+    }
+  }
+}
+
+const selectClasses =
+  "text-xs p-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-medium text-slate-700 dark:text-slate-200 outline-none w-full focus:bg-white dark:focus:bg-slate-900 focus:border-[#E61C24] disabled:opacity-75 disabled:cursor-not-allowed";
+
+function LabeledSelect({
+  label, value, onChange, disabled, children,
+}: {
+  label: string;
+  value: string;
+  onChange: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-500 dark:text-slate-400 block mb-1">
+        {label}
+      </label>
+      <select value={value} onChange={onChange} disabled={disabled} className={selectClasses}>
+        {children}
+      </select>
+    </div>
+  );
+}
+
+interface KpiCardProps {
+  value: React.ReactNode;
+  swatchClasses: string;
+  label: string;
+  headline: React.ReactNode;
+  sublabel?: React.ReactNode;
+  sublabelClasses?: string;
+}
+
+function KpiCard({ value, swatchClasses, label, headline, sublabel, sublabelClasses }: KpiCardProps) {
+  return (
+    <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-3xs flex items-center gap-4">
+      <div className={`w-12 h-12 shrink-0 rounded-xl flex items-center justify-center font-bold text-lg border ${swatchClasses}`}>
+        {value}
+      </div>
+      <div className="min-w-0">
+        <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-wider block font-semibold">{label}</span>
+        <span className="text-sm font-extrabold text-slate-800 dark:text-slate-100 truncate block">{headline}</span>
+        {sublabel && (
+          <div className={sublabelClasses || "text-[10px] text-slate-400 dark:text-slate-500 mt-0.5"}>{sublabel}</div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 const ReportingView: React.FC<ReportingViewProps> = ({
@@ -812,10 +944,10 @@ const ReportingView: React.FC<ReportingViewProps> = ({
   };
 
   return (
-    <div id="reporting_module_container" className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 space-y-6 max-w-[1600px] w-full mx-auto">
-      
+    <div id="reporting_module_container" className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8 space-y-6 max-w-[1600px] w-full mx-auto">
+
       {/* Title block with actions */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-900 text-white rounded-xl p-6 shadow-sm border border-slate-800">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-slate-900 dark:bg-slate-950 text-white rounded-xl p-5 sm:p-6 shadow-sm border border-slate-800">
         <div>
           <div className="flex items-center gap-2">
             <span className="p-1 px-2.5 bg-[#E61C24] text-[10px] font-extrabold uppercase rounded-full tracking-wider animate-pulse">
@@ -823,25 +955,25 @@ const ReportingView: React.FC<ReportingViewProps> = ({
             </span>
             <span className="text-slate-400 font-mono text-[11px]">System Tool</span>
           </div>
-          <h2 className="text-xl font-bold tracking-tight mt-1 flex items-center gap-2">
-            <FileText className="w-5 h-5 text-[#E61C24]" /> Unified EHS & Project Compliance Reports
+          <h2 className="text-lg sm:text-xl font-bold tracking-tight mt-1 flex items-center gap-2">
+            <FileText className="w-5 h-5 text-[#E61C24] shrink-0" /> Unified EHS & Project Compliance Reports
           </h2>
           <p className="text-slate-400 text-xs mt-1 max-w-2xl">
-            Interactive analytical suite providing high-fidelity oversight of partner compliance scores, 
+            Interactive analytical suite providing high-fidelity oversight of partner compliance scores,
             safety certification approval times, and regional safety metrics.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <button 
+          <button
             id="print_report_btn"
             onClick={handlePrintReport}
             className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white border border-slate-700 text-xs font-bold rounded-lg flex items-center gap-1.5 transition shadow-3xs"
           >
             <Printer className="w-3.5 h-3.5" /> Print Audit Portfolio
           </button>
-          
-          <button 
+
+          <button
             id="ai_report_btn"
             onClick={handleGenerateAiReport}
             disabled={isAiGenerating}
@@ -861,190 +993,146 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       </div>
 
       {/* Filter panel */}
-      <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs">
-        <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-150">
-          <div className="flex items-center gap-1.5 font-bold text-slate-800 text-xs uppercase tracking-wider">
+      <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-3xs">
+        <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-150 dark:border-slate-800">
+          <div className="flex items-center gap-1.5 font-bold text-slate-800 dark:text-slate-100 text-xs uppercase tracking-wider">
             <SlidersHorizontal className="w-4 h-4 text-[#E61C24]" /> Filter Parameters
           </div>
-          <button 
+          <button
             onClick={handleResetFilters}
-            className="text-[10px] text-slate-500 hover:text-[#E61C24] font-semibold flex items-center gap-1 transition"
+            className="text-[10px] text-slate-500 dark:text-slate-400 hover:text-[#E61C24] font-semibold flex items-center gap-1 transition"
           >
             <RefreshCw className="w-3 h-3" /> Reset Filter Settings
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          {/* Contractor Filter */}
-          <div>
-            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-500 block mb-1">
-              Filter by Partner Contractor:
-            </label>
-            <select
-              value={activeContractorId}
-              onChange={(e) => setSelectedBranchId(e.target.value)}
-              disabled={!isCentral}
-              className="text-xs p-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-700 outline-none w-full focus:bg-white focus:border-[#E61C24] disabled:opacity-75 disabled:cursor-not-allowed"
-            >
-              <option value="all">Safaricom Unified Network (All Partners)</option>
-              {contractors.map(b => (
-                <option key={b.id} value={b.id}>{b.name} ({b.code})</option>
-              ))}
-            </select>
-          </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <LabeledSelect
+            label="Filter by Partner Contractor:"
+            value={String(activeContractorId)}
+            onChange={(e) => setSelectedBranchId(e.target.value)}
+            disabled={!isCentral}
+          >
+            <option value="all">Safaricom Unified Network (All Partners)</option>
+            {contractors.map(b => (
+              <option key={b.id} value={b.id}>{b.name} ({b.code})</option>
+            ))}
+          </LabeledSelect>
 
-          {/* Project Filter */}
-          <div>
-            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-500 block mb-1">
-              Select Active Project Trace:
-            </label>
-            <select
-              value={selectedProjectId}
-              onChange={(e) => setSelectedProjectId(e.target.value)}
-              className="text-xs p-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-700 outline-none w-full focus:bg-white focus:border-[#E61C24]"
-            >
-              <option value="all">Analyze All Projects ({filteredProjects.length})</option>
-              {filteredProjects.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </div>
+          <LabeledSelect
+            label="Select Active Project Trace:"
+            value={selectedProjectId}
+            onChange={(e) => setSelectedProjectId(e.target.value)}
+          >
+            <option value="all">Analyze All Projects ({filteredProjects.length})</option>
+            {filteredProjects.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </LabeledSelect>
 
-          {/* Verification Status Filter */}
-          <div>
-            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-500 block mb-1">
-              Cert Upload Status:
-            </label>
-            <select
-              value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value)}
-              className="text-xs p-2 bg-slate-50 border border-slate-200 rounded-lg font-medium text-slate-700 outline-none w-full focus:bg-white focus:border-[#E61C24]"
-            >
-              <option value="all">All Submission Statuses</option>
-              <option value="Approved">Verified / Approved</option>
-              <option value="Pending Central Approval">Pending Central HQ Approval</option>
-              <option value="Pending Contractor Approval">Pending Contractor EHS Lead Approval</option>
-              <option value="Rejected">Rejected Compliance Files</option>
-            </select>
-          </div>
+          <LabeledSelect
+            label="Cert Upload Status:"
+            value={selectedStatus}
+            onChange={(e) => setSelectedStatus(e.target.value)}
+          >
+            <option value="all">All Submission Statuses</option>
+            <option value="Approved">Verified / Approved</option>
+            <option value="Pending Central Approval">Pending Central HQ Approval</option>
+            <option value="Pending Contractor Approval">Pending Contractor EHS Lead Approval</option>
+            <option value="Rejected">Rejected Compliance Files</option>
+          </LabeledSelect>
 
           {/* Minimum safety rating */}
           <div>
-            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-500 block mb-1">
+            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-500 dark:text-slate-400 block mb-1">
               Min overall Crew Safety Score: {minEhsScore > 0 ? `${minEhsScore}%` : "All scores"}
             </label>
-            <input 
-              type="range" 
-              min="0" 
-              max="95" 
+            <input
+              type="range"
+              min="0"
+              max="95"
               step="5"
               value={minEhsScore}
               onChange={(e) => setMinEhsScore(parseInt(e.target.value))}
-              className="w-full accent-[#E61C24] cursor-pointer h-1.5 bg-slate-200 rounded-lg"
+              className="w-full accent-[#E61C24] cursor-pointer h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg mt-2.5"
             />
           </div>
         </div>
       </div>
 
       {/* Key Metric KPI grid */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
-        {/* Compliance Index KPI */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-lg border border-emerald-100">
-            {stats.avgScore}%
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-semibold">Compliance Index</span>
-            <span className="text-sm font-extrabold text-slate-800">
-              {stats.avgScore >= 85 ? "Optimum (Gold)" : stats.avgScore >= 75 ? "Robust" : "Pre-Critical Warning"}
-            </span>
-            <div className="flex items-center gap-1 text-[10px] text-emerald-600 font-semibold mt-0.5">
-              <TrendingUp className="w-3 h-3" /> Tested field crew
-            </div>
-          </div>
-        </div>
-
-        {/* Upload Audit Success KPI */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-lg border border-indigo-100">
-            {stats.approvalRate}%
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-semibold">Audit Approval Success</span>
-            <span className="text-sm font-extrabold text-slate-800">{stats.totalDocs} uploaded cert files</span>
-            <div className="text-[10px] text-slate-400 mt-0.5">Approved compliance submissions</div>
-          </div>
-        </div>
-
-        {/* Active safety issue alert notifications */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs flex items-center gap-4">
-          <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg border ${stats.issueCount > 0 ? "bg-amber-50 text-amber-600 border-amber-100" : "bg-slate-50 text-slate-400 border-slate-100"}`}>
-            {stats.issueCount}
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-semibold">Active Hazard Flags</span>
-            <span className="text-sm font-extrabold text-slate-800">
-              {stats.issueCount > 0 ? "Hazards Flagged" : "Zero Issues Flagged"}
-            </span>
-            <div className="text-[10px] text-slate-400 mt-0.5">Extracted by intelligent review</div>
-          </div>
-        </div>
-
-        {/* Deployed Safety Lead Presence */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-rose-50 text-[#E61C24] flex items-center justify-center font-bold text-lg border border-rose-100">
-            {filteredProjects.length}
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-semibold">Contractor Projects</span>
-            <span className="text-sm font-extrabold text-slate-800">Under Active Oversight</span>
-            <div className="text-[10px] text-slate-400 mt-0.5">Audited regional tower hubs</div>
-          </div>
-        </div>
-
-        {/* Total Rollout Distance KPI */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center font-bold text-lg border border-sky-100">
-            <span className="flex flex-col items-center">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 sm:gap-6">
+        <KpiCard
+          value={`${stats.avgScore}%`}
+          swatchClasses="bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20"
+          label="Compliance Index"
+          headline={stats.avgScore >= 85 ? "Optimum (Gold)" : stats.avgScore >= 75 ? "Robust" : "Pre-Critical Warning"}
+          sublabel={<span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold"><TrendingUp className="w-3 h-3" /> Tested field crew</span>}
+        />
+        <KpiCard
+          value={`${stats.approvalRate}%`}
+          swatchClasses="bg-indigo-50 text-indigo-600 border-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/20"
+          label="Audit Approval Success"
+          headline={`${stats.totalDocs} uploaded cert files`}
+          sublabel="Approved compliance submissions"
+        />
+        <KpiCard
+          value={stats.issueCount}
+          swatchClasses={stats.issueCount > 0
+            ? "bg-amber-50 text-amber-600 border-amber-100 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20"
+            : "bg-slate-50 text-slate-400 border-slate-100 dark:bg-slate-800 dark:text-slate-500 dark:border-slate-700"}
+          label="Active Hazard Flags"
+          headline={stats.issueCount > 0 ? "Hazards Flagged" : "Zero Issues Flagged"}
+          sublabel="Extracted by intelligent review"
+        />
+        <KpiCard
+          value={filteredProjects.length}
+          swatchClasses="bg-rose-50 text-[#E61C24] border-rose-100 dark:bg-rose-500/10 dark:border-rose-500/20"
+          label="Contractor Projects"
+          headline="Under Active Oversight"
+          sublabel="Audited regional tower hubs"
+        />
+        <KpiCard
+          value={
+            <span className="flex flex-col items-center leading-none">
               {stats.totalRolloutDistance}
-              <span className="text-[8px] font-bold text-sky-500 uppercase">km</span>
+              <span className="text-[8px] font-bold text-sky-500 dark:text-sky-400 uppercase mt-0.5">km</span>
             </span>
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-500 uppercase tracking-wider block font-semibold">Total Rollout</span>
-            <span className="text-sm font-extrabold text-slate-800">In Fibre Kilometers</span>
-            <div className="text-[10px] text-slate-400 mt-0.5">Aggregated fibre distance</div>
-          </div>
-        </div>
+          }
+          swatchClasses="bg-sky-50 text-sky-600 border-sky-100 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/20"
+          label="Total Rollout"
+          headline="In Fibre Kilometers"
+          sublabel="Aggregated fibre distance"
+        />
       </div>
 
       {/* AI compiled summary dynamic output and charts */}
       {aiReportOutput && (
-        <div className="bg-rose-50/70 border border-rose-150 rounded-xl p-5 shadow-3xs animate-fade-in text-slate-800 text-xs">
+        <div className="bg-rose-50/70 dark:bg-rose-500/10 border border-rose-150 dark:border-rose-500/20 rounded-xl p-4 sm:p-5 shadow-3xs animate-fade-in text-slate-800 dark:text-slate-200 text-xs">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-1.5 font-bold text-[#E61C24] uppercase tracking-wider">
-              <Sparkles className="w-4 h-4 text-[#E61C24] fill-rose-200" /> Compiled Executive Summary Findings
+              <Sparkles className="w-4 h-4 text-[#E61C24] fill-rose-200 dark:fill-rose-500/20" /> Compiled Executive Summary Findings
             </div>
-            <button 
+            <button
               onClick={() => setAiReportOutput(null)}
-              className="text-[10px] hover:text-[#E61C24] text-slate-500 font-bold"
+              className="text-[10px] hover:text-[#E61C24] text-slate-500 dark:text-slate-400 font-bold"
             >
               ✕ Hide Report Panel
             </button>
           </div>
-          <div className="bg-white rounded-lg p-5 border border-slate-150 space-y-3 prose prose-sm max-w-none text-slate-700">
+          <div className="bg-white dark:bg-slate-900 rounded-lg p-4 sm:p-5 border border-slate-150 dark:border-slate-800 space-y-3 prose prose-sm dark:prose-invert max-w-none text-slate-700 dark:text-slate-300">
             {aiReportOutput.split("\n").map((line, i) => {
               if (line.startsWith("### ")) {
-                return <h3 key={i} className="text-sm font-extrabold text-slate-900 border-b border-slate-100 pb-1.5 mt-2 uppercase tracking-wide">{line.replace("### ", "")}</h3>;
+                return <h3 key={i} className="text-sm font-extrabold text-slate-900 dark:text-slate-100 border-b border-slate-100 dark:border-slate-800 pb-1.5 mt-2 uppercase tracking-wide">{line.replace("### ", "")}</h3>;
               }
               if (line.startsWith("#### ")) {
-                return <h4 key={i} className="text-xs font-bold text-slate-850 mt-3 flex items-center gap-1">{line.replace("#### ", "")}</h4>;
+                return <h4 key={i} className="text-xs font-bold text-slate-850 dark:text-slate-200 mt-3 flex items-center gap-1">{line.replace("#### ", "")}</h4>;
               }
               if (line.startsWith("- ")) {
                 return <p key={i} className="pl-4 border-l-2 border-red-500/30 my-1">{line.replace("- ", "")}</p>;
               }
               if (line.startsWith("  - ")) {
-                return <p key={i} className="pl-8 text-[11px] text-slate-500 italic my-0.5">{line.replace("  - ", "")}</p>;
+                return <p key={i} className="pl-8 text-[11px] text-slate-500 dark:text-slate-400 italic my-0.5">{line.replace("  - ", "")}</p>;
               }
               if (line.trim() === "") return <div key={i} className="h-1" />;
               return <p key={i} className="leading-relaxed">{line}</p>;
@@ -1058,43 +1146,43 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
       {/* Graphic Analytical Visualizations block */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
+
         {/* Chart 1: Project-wise EHS scores comparison */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs">
-          <h3 className="font-bold text-xs text-slate-800 uppercase tracking-wider mb-4">Project-wise Safety Score Index Comparison</h3>
-          
-          <div className="h-[250px] w-full">
+        <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-3xs">
+          <h3 className="font-bold text-xs text-slate-800 dark:text-slate-100 uppercase tracking-wider mb-4">Project-wise Safety Score Index Comparison</h3>
+
+          <div className="h-[220px] sm:h-[250px] w-full">
             {projectChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%" minWidth={0} debounce={100} id="project_ehs_score_chart">
                 <BarChart data={projectChartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                  <XAxis 
-                    dataKey="projectName" 
-                    tick={{ fill: "#64748b", fontSize: 9 }} 
-                    axisLine={false} 
+                  <CartesianGrid strokeDasharray="3 3" stroke="#cbd5e1" strokeOpacity={0.4} vertical={false} />
+                  <XAxis
+                    dataKey="projectName"
+                    tick={{ fill: "#64748b", fontSize: 9 }}
+                    axisLine={false}
                     tickLine={false}
                   />
-                  <YAxis 
-                    domain={[0, 100]} 
-                    tick={{ fill: "#64748b", fontSize: 9 }} 
-                    axisLine={false} 
+                  <YAxis
+                    domain={[0, 100]}
+                    tick={{ fill: "#64748b", fontSize: 9 }}
+                    axisLine={false}
                     tickLine={false}
                     tickFormatter={(val) => `${val}%`}
                   />
-                  <Tooltip 
+                  <Tooltip
                     contentStyle={{ backgroundColor: "#1e293b", color: "#fff", border: "none", borderRadius: "8px", fontSize: "10px" }}
                     labelStyle={{ fontWeight: "bold", color: "#94a3b8" }}
                   />
-                  <Bar 
-                    dataKey="Avg safety score (%)" 
-                    fill="#E61C24" 
-                    radius={[6, 6, 0, 0]} 
+                  <Bar
+                    dataKey="Avg safety score (%)"
+                    fill="#E61C24"
+                    radius={[6, 6, 0, 0]}
                     maxBarSize={45}
                   />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400 text-[11px] italic">
+              <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 text-[11px] italic">
                 No project score data available under current filter variables.
               </div>
             )}
@@ -1102,11 +1190,11 @@ const ReportingView: React.FC<ReportingViewProps> = ({
         </div>
 
         {/* Chart 2: Safety Certificate Upload verification State distribution */}
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-3xs">
-          <h3 className="font-bold text-xs text-slate-800 uppercase tracking-wider mb-4">Verification State Distribution (Safety Audits)</h3>
-          
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 h-[250px] items-center">
-            <div className="col-span-7 h-full w-full">
+        <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-3xs">
+          <h3 className="font-bold text-xs text-slate-800 dark:text-slate-100 uppercase tracking-wider mb-4">Verification State Distribution (Safety Audits)</h3>
+
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 md:h-[250px] items-center">
+            <div className="col-span-1 md:col-span-7 h-[200px] md:h-full w-full">
               {documentStatusPieData.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%" minWidth={0} debounce={100} id="doc_status_pie_chart">
                   <PieChart>
@@ -1123,29 +1211,29 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                         <Cell key={`cell-${index}`} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip 
+                    <Tooltip
                       contentStyle={{ backgroundColor: "#1e293b", color: "#fff", border: "none", borderRadius: "8px", fontSize: "10px" }}
                     />
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-400 text-[11px] italic">
+                <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 text-[11px] italic">
                   No certificate document statistics available.
                 </div>
               )}
             </div>
 
-            <div className="col-span-5 space-y-2">
-              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block font-mono">Legend Breakdown</span>
-              {documentStatusPieData.map((item, _idx) => (
-                <div key={item.name} className="flex items-center gap-2 text-[11px] text-slate-600">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                  <span className="capitalize">{item.name}:</span>
-                  <strong className="font-bold text-slate-800 text-xs">{item.value}</strong>
+            <div className="col-span-1 md:col-span-5 space-y-2">
+              <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest block font-mono">Legend Breakdown</span>
+              {documentStatusPieData.map((item) => (
+                <div key={item.name} className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+                  <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                  <span className="capitalize truncate">{item.name}:</span>
+                  <strong className="font-bold text-slate-800 dark:text-slate-100 text-xs shrink-0">{item.value}</strong>
                 </div>
               ))}
               {documentStatusPieData.length === 0 && (
-                <div className="text-[10px] text-slate-400 italic">No submissions file queue logged representing active partner filters.</div>
+                <div className="text-[10px] text-slate-400 dark:text-slate-500 italic">No submissions file queue logged representing active partner filters.</div>
               )}
             </div>
           </div>
@@ -1153,521 +1241,472 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
       </div>
 
-    {/* AUTOMATED REGULATORY COMPLIANCE SYSTEM MONITOR (OSHA / EPA / NEMA) */}
-    <div className="bg-white rounded-xl border border-slate-200 shadow-3xs overflow-hidden">
-      <div className="p-5 border-b border-slate-150 bg-slate-50/70 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="flex h-2 w-2 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-            </span>
-            <span className="text-[10px] font-extrabold text-slate-500 uppercase tracking-widest font-mono">
-              Safaricom Compliance Engine (Daemon Active)
-            </span>
+      {/* AUTOMATED REGULATORY COMPLIANCE SYSTEM MONITOR (OSHA / EPA / NEMA) */}
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-3xs overflow-hidden">
+        <div className="p-4 sm:p-5 border-b border-slate-150 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="flex h-2 w-2 relative">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+              </span>
+              <span className="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-widest font-mono">
+                Safaricom Compliance Engine (Daemon Active)
+              </span>
+            </div>
+            <h3 className="font-extrabold text-sm text-slate-900 dark:text-slate-100 uppercase mt-1 flex items-center gap-1.5">
+              <Shield className="w-5 h-5 text-[#E61C24]" /> Automated Policy & Regulatory Audit
+            </h3>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+              Periodic scanning engine mapping active operations against OSHA crew standards, NEMA/EPA environmental clearances, and Safaricom safety validation SLAs.
+            </p>
           </div>
-          <h3 className="font-extrabold text-sm text-slate-900 uppercase mt-1 flex items-center gap-1.5">
-            <Shield className="w-5 h-5 text-[#E61C24]" /> Automated Policy & Regulatory Audit
-          </h3>
-          <p className="text-[10px] text-slate-500 mt-0.5">
-            Periodic scanning engine mapping active operations against OSHA crew standards, NEMA/EPA environmental clearances, and Safaricom safety validation SLAs.
-          </p>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
-          <button
-            id="print_high_risk_pdf_btn"
-            onClick={handlePrintHighRiskFlags}
-            className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xs rounded-lg transition flex items-center gap-1.5 shadow-sm"
-            title="Print a formatted, printer-friendly summary of all unresolved high-risk compliance flags"
-          >
-            <Printer className="w-3.5 h-3.5" /> Print to PDF
-          </button>
-
-          <button
-            id="export_compliance_csv_btn"
-            onClick={handleExportCSV}
-            className="px-3.5 py-2 bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold text-xs rounded-lg transition flex items-center gap-1.5 shadow-sm"
-            title="Export active compliance flags and their status to a CSV file for external audit reporting"
-          >
-            <Download className="w-3.5 h-3.5" /> Export Compliance CSV
-          </button>
-
-          {onTriggerScan && (currentUser?.role === Role.SafaricomAdmin || currentUser?.role === Role.SafaricomEHSOfficer) && (
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
             <button
-              id="sweep_scan_btn"
-              onClick={onTriggerScan}
-              className="px-4 py-2 bg-slate-900 text-white font-extrabold text-xs rounded-lg hover:bg-slate-800 transition flex items-center gap-1.5 shadow-sm"
-              title="Scan whole active database to look for newly active regulatory warnings"
+              id="print_high_risk_pdf_btn"
+              onClick={handlePrintHighRiskFlags}
+              className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xs rounded-lg transition flex items-center gap-1.5 shadow-sm"
+              title="Print a formatted, printer-friendly summary of all unresolved high-risk compliance flags"
             >
-              <RefreshCw className="w-3.5 h-3.5" /> Sweep & Analyze Workspace
+              <Printer className="w-3.5 h-3.5" /> Print to PDF
             </button>
-          )}
-        </div>
-      </div>
 
-      <div className="p-4 border-b border-slate-100 bg-slate-50/20 grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-        {/* Standard selector */}
-        <div className="md:col-span-5 flex items-center gap-1 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
-          <span className="text-[10px] uppercase font-bold text-slate-400 pr-1 shrink-0 font-mono">Standard:</span>
-          {["all", "OSHA", "EPA", "Regulatory", "Safaricom Internal"].map((std) => (
             <button
-              key={std}
-              onClick={() => setComplianceStandardFilter(std)}
-              className={`px-3 py-1 text-xs rounded-full font-bold transition whitespace-nowrap ${
-                complianceStandardFilter === std
-                  ? "bg-[#E61C24] text-white"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              id="export_compliance_csv_btn"
+              onClick={handleExportCSV}
+              className="px-3.5 py-2 bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold text-xs rounded-lg transition flex items-center gap-1.5 shadow-sm"
+              title="Export active compliance flags and their status to a CSV file for external audit reporting"
+            >
+              <Download className="w-3.5 h-3.5" /> Export Compliance CSV
+            </button>
+
+            {onTriggerScan && (currentUser?.role === Role.SafaricomAdmin || currentUser?.role === Role.SafaricomEHSOfficer) && (
+              <button
+                id="sweep_scan_btn"
+                onClick={onTriggerScan}
+                className="px-4 py-2 bg-slate-900 dark:bg-slate-700 text-white font-extrabold text-xs rounded-lg hover:bg-slate-800 dark:hover:bg-slate-600 transition flex items-center gap-1.5 shadow-sm"
+                title="Scan whole active database to look for newly active regulatory warnings"
+              >
+                <RefreshCw className="w-3.5 h-3.5" /> Sweep & Analyze Workspace
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-800/10 grid grid-cols-1 lg:grid-cols-12 gap-3 items-center">
+          {/* Standard selector */}
+          <div className="lg:col-span-5 flex items-center gap-1 overflow-x-auto pb-1 lg:pb-0 scrollbar-none">
+            <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 pr-1 shrink-0 font-mono">Standard:</span>
+            {["all", "OSHA", "EPA", "Regulatory", "Safaricom Internal"].map((std) => (
+              <button
+                key={std}
+                onClick={() => setComplianceStandardFilter(std)}
+                className={`px-3 py-1 text-xs rounded-full font-bold transition whitespace-nowrap shrink-0 ${
+                  complianceStandardFilter === std
+                    ? "bg-[#E61C24] text-white"
+                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                }`}
+              >
+                {std === "all" ? "All Rules" : std}
+              </button>
+            ))}
+          </div>
+
+          {/* Severity Selector */}
+          <div className="lg:col-span-4 flex items-center gap-1.5">
+            <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono shrink-0">Severity:</span>
+            <select
+              value={complianceSeverityFilter}
+              onChange={(e) => setComplianceSeverityFilter(e.target.value)}
+              className="text-xs p-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 dark:text-slate-200 outline-none w-full"
+            >
+              <option value="all">All Severities</option>
+              <option value="High">🔴 High Severity</option>
+              <option value="Medium">🟡 Medium Severity</option>
+              <option value="Low">🔵 Low Severity</option>
+            </select>
+          </div>
+
+          {/* Status Selector Tabs (Active vs Resolved) */}
+          <div className="lg:col-span-3 flex border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 bg-slate-100/60 dark:bg-slate-800/60 lg:ml-auto w-full lg:w-auto">
+            <button
+              onClick={() => {
+                setComplianceStatusFilter("Active");
+                setResolvingFlagId(null);
+              }}
+              className={`flex-1 px-3 py-1 text-xs rounded-md font-bold transition flex items-center justify-center gap-1 ${
+                complianceStatusFilter === "Active"
+                  ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-3xs"
+                  : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
               }`}
             >
-              {std === "all" ? "All Rules" : std}
+              <AlertTriangle className="w-3 h-3 text-amber-500" /> Active ({(complianceFlags || []).filter(f => f && f.status === "Active").length})
             </button>
-          ))}
+            <button
+              onClick={() => {
+                setComplianceStatusFilter("Resolved");
+                setResolvingFlagId(null);
+              }}
+              className={`flex-1 px-3 py-1 text-xs rounded-md font-bold transition flex items-center justify-center gap-1 ${
+                complianceStatusFilter === "Resolved"
+                  ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-3xs"
+                  : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+              }`}
+            >
+              <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Resolved ({(complianceFlags || []).filter(f => f && f.status === "Resolved").length})
+            </button>
+          </div>
         </div>
 
-        {/* Severity Selector */}
-        <div className="md:col-span-4 flex items-center gap-1.5">
-          <span className="text-[10px] uppercase font-bold text-slate-400 font-mono">Severity:</span>
-          <select
-            value={complianceSeverityFilter}
-            onChange={(e) => setComplianceSeverityFilter(e.target.value)}
-            className="text-xs p-1.5 bg-slate-50 border border-slate-200 rounded-lg font-bold text-slate-700 outline-none w-full"
-          >
-            <option value="all">All Severities</option>
-            <option value="High">🔴 High Severity</option>
-            <option value="Medium">🟡 Medium Severity</option>
-            <option value="Low">🔵 Low Severity</option>
-          </select>
-        </div>
+        <div className="divide-y divide-slate-150 dark:divide-slate-800 flex-1 overflow-y-auto min-h-0">
+          {paginatedFlags.map((flag) => {
+            const { Icon: FlagIcon, color: iconColor } = getFlagIconMeta(flag.standard);
+            const severityBadge = getSeverityBadgeClasses(flag.severity);
 
-        {/* Status Selector Tabs (Active vs Resolved) */}
-            <div className="md:col-span-3 flex border border-slate-200 rounded-lg p-0.5 bg-slate-100/60 ml-auto w-full md:w-auto">
-          <button
-            onClick={() => {
-              setComplianceStatusFilter("Active");
-              setResolvingFlagId(null);
-            }}
-            className={`flex-1 px-3 py-1 text-xs rounded-md font-bold transition flex items-center justify-center gap-1 ${
-              complianceStatusFilter === "Active"
-                ? "bg-white text-slate-900 shadow-3xs"
-                : "text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            <AlertTriangle className="w-3 h-3 text-amber-500" /> Active ({(complianceFlags || []).filter(f => f && f.status === "Active").length})
-          </button>
-          <button
-            onClick={() => {
-              setComplianceStatusFilter("Resolved");
-              setResolvingFlagId(null);
-            }}
-            className={`flex-1 px-3 py-1 text-xs rounded-md font-bold transition flex items-center justify-center gap-1 ${
-              complianceStatusFilter === "Resolved"
-                ? "bg-white text-slate-900 shadow-3xs"
-                : "text-slate-500 hover:text-slate-800"
-            }`}
-          >
-            <CheckCircle2 className="w-3 h-3 text-emerald-500" /> Resolved ({(complianceFlags || []).filter(f => f && f.status === "Resolved").length})
-          </button>
-        </div>
-      </div>
-
-      <div className="divide-y divide-slate-150 flex-1 overflow-y-auto min-h-0">
-        {paginatedFlags.map((flag) => {
-          // Identify corresponding visual icon
-          let FlagIcon = AlertCircle;
-          let iconColor = "text-slate-400";
-          if (flag.standard === "OSHA") {
-            FlagIcon = Shield;
-            iconColor = "text-red-500";
-          } else if (flag.standard === "EPA" || flag.standard === "NEMA") {
-            FlagIcon = Leaf;
-            iconColor = "text-emerald-500";
-          } else if (flag.standard === "Regulatory") {
-            FlagIcon = Clock;
-            iconColor = "text-indigo-500";
-          } else {
-            FlagIcon = Info;
-            iconColor = "text-slate-500";
-          }
-
-          // Severity colors
-          let severityBadge = "bg-slate-100 text-slate-700";
-          if (flag.severity === "High") {
-            severityBadge = "bg-red-50 text-red-700 border border-red-150 font-extrabold";
-          } else if (flag.severity === "Medium") {
-            severityBadge = "bg-amber-50 text-amber-700 border border-amber-150 font-bold";
-          } else if (flag.severity === "Low") {
-            severityBadge = "bg-blue-50 text-blue-700 border border-blue-150 font-medium";
-          }
-
-          return (
-            <div key={flag.id} className="p-4 hover:bg-slate-50/40 transition">
-              <div className="flex items-start gap-3.5">
-                <div className={`p-2 bg-slate-100 rounded-xl ${iconColor} mt-0.5 shadow-3xs border border-slate-200/50`}>
-                  <FlagIcon className="w-5 h-5" />
-                </div>
-
-                <div className="flex-grow space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-extrabold text-slate-900 text-[13px]">{flag.ruleName}</span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-mono tracking-wider uppercase font-semibold ${severityBadge}`}>
-                      {flag.severity}
-                    </span>
-                    <span className="text-[10px] font-extrabold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
-                      {flag.standard}
-                    </span>
-                    <span className="text-[10.5px] text-slate-400 ml-auto font-medium">
-                      Flagged: {(() => {
-                        try {
-                          return new Date(flag.flaggedAt).toLocaleString();
-                        } catch {
-                          try { return safeString(flag.flaggedAt); } catch { return "Unknown"; }
-                        }
-                      })()}
-                    </span>
+            return (
+              <div key={flag.id} className="p-4 hover:bg-slate-50/40 dark:hover:bg-slate-800/40 transition">
+                <div className="flex items-start gap-3.5">
+                  <div className={`p-2 bg-slate-100 dark:bg-slate-800 rounded-xl ${iconColor} mt-0.5 shadow-3xs border border-slate-200/50 dark:border-slate-700/50 shrink-0`}>
+                    <FlagIcon className="w-5 h-5" />
                   </div>
 
-                  <p className="text-xs text-slate-600 leading-relaxed font-medium bg-slate-50/50 p-3 rounded-lg border border-slate-100 mt-1">
-                    {flag.description}
-                  </p>
-
-                  <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1.5">
-                    <div className="flex items-center gap-2 text-[10.5px] text-slate-500 font-bold">
-                      <span className="uppercase tracking-wider text-[9px] text-slate-400 font-mono">Linked Entity:</span>
-                      <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded capitalize font-mono text-[10px]">
-                        {flag.targetType}
+                  <div className="flex-grow min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-extrabold text-slate-900 dark:text-slate-100 text-[13px]">{flag.ruleName}</span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono tracking-wider uppercase font-semibold ${severityBadge}`}>
+                        {flag.severity}
                       </span>
-                      <span className="text-slate-800 font-bold italic">&quot;{flag.targetName}&quot;</span>
+                      <span className="text-[10px] font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded">
+                        {flag.standard}
+                      </span>
+                      <span className="text-[10.5px] text-slate-400 dark:text-slate-500 sm:ml-auto font-medium">
+                        Flagged: {formatDateSafe(flag.flaggedAt)}
+                      </span>
                     </div>
 
-                    {flag.status === "Active" ? (
-                      <div>
-                        {resolvingFlagId === flag.id ? (
-                          <div className="mt-3 bg-indigo-50/60 p-3 rounded-xl border border-indigo-100 space-y-2.5 max-w-xl">
-                            <span className="text-[11px] font-extrabold text-indigo-900 block uppercase tracking-wider font-mono">
-                              File Official Resolution Corrective Action
-                            </span>
-                            <textarea
-                              className="w-full text-xs p-2 bg-white border border-slate-200 rounded-lg outline-none focus:border-indigo-500 font-medium"
-                              rows={2}
-                              value={resolutionInputText}
-                              onChange={(e) => setResolutionInputText(e.target.value)}
-                              placeholder="Please detail the corrective actions filed (e.g. Technician safety training program completed, valid NEMA certificate uploaded, or field safety equipment checked)..."
-                            />
-                            <div className="flex justify-end gap-2">
-                              <button
-                                onClick={() => setResolvingFlagId(null)}
-                                className="px-3 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-slate-700 text-[11px] font-bold transition"
-                              >
-                                Cancel
-                              </button>
-                              <button
-                                onClick={() => {
-                                  if (onResolveFlag) {
-                                    onResolveFlag(flag.id, resolutionInputText);
-                                    setResolvingFlagId(null);
-                                    setResolutionInputText("");
-                                  }
-                                }}
-                                disabled={!resolutionInputText.trim()}
-                                className="px-3.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold transition disabled:opacity-50"
-                              >
-                                Submit Compliance Audit Log
-                              </button>
+                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium bg-slate-50/50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-100 dark:border-slate-800 mt-1">
+                      {flag.description}
+                    </p>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1.5">
+                      <div className="flex items-center gap-2 text-[10.5px] text-slate-500 dark:text-slate-400 font-bold">
+                        <span className="uppercase tracking-wider text-[9px] text-slate-400 dark:text-slate-500 font-mono">Linked Entity:</span>
+                        <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded capitalize font-mono text-[10px]">
+                          {flag.targetType}
+                        </span>
+                        <span className="text-slate-800 dark:text-slate-200 font-bold italic">&quot;{flag.targetName}&quot;</span>
+                      </div>
+
+                      {flag.status === "Active" ? (
+                        <div>
+                          {resolvingFlagId === flag.id ? (
+                            <div className="mt-3 bg-indigo-50/60 dark:bg-indigo-500/10 p-3 rounded-xl border border-indigo-100 dark:border-indigo-500/20 space-y-2.5 max-w-xl">
+                              <span className="text-[11px] font-extrabold text-indigo-900 dark:text-indigo-300 block uppercase tracking-wider font-mono">
+                                File Official Resolution Corrective Action
+                              </span>
+                              <textarea
+                                className="w-full text-xs p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:border-indigo-500 font-medium text-slate-900 dark:text-slate-100"
+                                rows={2}
+                                value={resolutionInputText}
+                                onChange={(e) => setResolutionInputText(e.target.value)}
+                                placeholder="Please detail the corrective actions filed (e.g. Technician safety training program completed, valid NEMA certificate uploaded, or field safety equipment checked)..."
+                              />
+                              <div className="flex justify-end gap-2">
+                                <button
+                                  onClick={() => setResolvingFlagId(null)}
+                                  className="px-3 py-1 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-200 text-[11px] font-bold transition"
+                                >
+                                  Cancel
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    if (onResolveFlag) {
+                                      onResolveFlag(flag.id, resolutionInputText);
+                                      setResolvingFlagId(null);
+                                      setResolutionInputText("");
+                                    }
+                                  }}
+                                  disabled={!resolutionInputText.trim()}
+                                  className="px-3.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold transition disabled:opacity-50"
+                                >
+                                  Submit Compliance Audit Log
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setResolvingFlagId(flag.id);
-                              setResolutionInputText("");
-                            }}
-                            className="px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-150 text-[10.5px] font-extrabold rounded-lg transition"
-                          >
-                            Resolve Warning Flag
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="mt-2 bg-emerald-50/70 p-3 rounded-xl border border-emerald-100 w-full text-left">
-                        <div className="flex items-center gap-1.5 text-emerald-800 font-bold text-xs">
-                          <CheckCircle className="w-4 h-4 text-emerald-600" />
-                          <span>RESOLVED AUDIT SIGN-OFF</span>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setResolvingFlagId(flag.id);
+                                setResolutionInputText("");
+                              }}
+                              className="px-3 py-1 bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 border border-indigo-150 dark:border-indigo-500/20 text-[10.5px] font-extrabold rounded-lg transition"
+                            >
+                              Resolve Warning Flag
+                            </button>
+                          )}
                         </div>
-                        {flag.resolvedAt && (
-                          <span className="text-[10px] text-emerald-600/80 block font-semibold mt-0.5">
-                            Closed on: {(() => {
-                              try {
-                                return new Date(flag.resolvedAt).toLocaleString();
-                              } catch {
-                                try { return safeString(flag.resolvedAt); } catch { return "Unknown"; }
-                              }
-                            })()}
-                          </span>
-                        )}
-                        <p className="text-[11px] text-slate-600 mt-1 italic font-medium">
-                          <strong>Correction Notes:</strong> {flag.resolutionComments || "Approved during regular safety cycle checks."}
-                        </p>
-                      </div>
-                    )}
+                      ) : (
+                        <div className="mt-2 bg-emerald-50/70 dark:bg-emerald-500/10 p-3 rounded-xl border border-emerald-100 dark:border-emerald-500/20 w-full text-left">
+                          <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-400 font-bold text-xs">
+                            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                            <span>RESOLVED AUDIT SIGN-OFF</span>
+                          </div>
+                          {flag.resolvedAt && (
+                            <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 block font-semibold mt-0.5">
+                              Closed on: {formatDateSafe(flag.resolvedAt)}
+                            </span>
+                          )}
+                          <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 italic font-medium">
+                            <strong>Correction Notes:</strong> {flag.resolutionComments || "Approved during regular safety cycle checks."}
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
 
-        {paginatedFlags.length === 0 && (
-          <div className="p-12 text-center text-slate-500 text-xs flex flex-col items-center justify-center space-y-3">
-            <CheckCircle2 className="w-12 h-12 text-emerald-500 animate-bounce" />
-            <div>
-              <p className="font-extrabold text-slate-800 uppercase tracking-wider text-sm">
-                No Policy Breaches Detected
-              </p>
-              <p className="text-slate-400 text-[11px] mt-1 max-w-sm mx-auto">
-                Excellent! All currently monitored active projects and documentations have completely passed OSHA & NEMA compliance audits under specified filters.
-              </p>
+          {paginatedFlags.length === 0 && (
+            <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs flex flex-col items-center justify-center space-y-3">
+              <CheckCircle2 className="w-12 h-12 text-emerald-500 animate-bounce" />
+              <div>
+                <p className="font-extrabold text-slate-800 dark:text-slate-100 uppercase tracking-wider text-sm">
+                  No Policy Breaches Detected
+                </p>
+                <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-1 max-w-sm mx-auto">
+                  Excellent! All currently monitored active projects and documentations have completely passed OSHA & NEMA compliance audits under specified filters.
+                </p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <PaginationControls
-          currentPage={compFlagsPage}
-          setCurrentPage={setCompFlagsPage}
-          totalItems={filteredFlags.length}
-          itemsPerPage={COMP_FLAGS_PER_PAGE}
-        />
-      </div>
-    </div>
-
-    {/* TECHNICIAN SAFETY DOCUMENT EXPIRATION AUDIT & PROGNOSIS REPORT */}
-    <div id="document-expiration-report" className="bg-white rounded-xl border border-slate-200 shadow-3xs overflow-hidden my-6">
-      <div className="p-5 border-b border-slate-150 bg-slate-50/70">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 text-[9px] font-extrabold bg-[#E61C24]/10 text-[#E61C24] rounded border border-[#E61C24]/20 uppercase tracking-widest font-mono">
-                Predictive SLA Watch
-              </span>
-              <span className="text-[10px] text-slate-400 font-mono">Reference Date: June 14, 2026</span>
-            </div>
-            <h3 className="font-extrabold text-sm text-slate-900 uppercase flex items-center gap-1.5">
-              <Clock className="w-5 h-5 text-[#E61C24]" /> Document Expiration Forecasting Report
-            </h3>
-            <p className="text-[10.5px] text-slate-500 max-w-2xl leading-relaxed">
-              Dynamically audit active technician certificates and credentials. Filter or input a customized day-count window to capture impending expirations and prevent unauthorized field work.
-            </p>
-          </div>
+          <PaginationControls
+            currentPage={compFlagsPage}
+            setCurrentPage={setCompFlagsPage}
+            totalItems={filteredFlags.length}
+            itemsPerPage={COMP_FLAGS_PER_PAGE}
+          />
         </div>
       </div>
 
-      {/* Prediction Controls Section */}
-      <div className="p-4 border-b border-slate-100 bg-slate-50/20 grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
-        {/* Dynamic Days Range Selector */}
-        <div className="lg:col-span-5 space-y-1">
-          <label className="text-[10px] uppercase font-bold text-slate-400 font-mono block">Forecast Threshold (Days):</label>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={expirationDays}
-              onChange={(e) => {
-                setExpiredOnlyFilter(false);
-                setExpirationDays(e.target.value.replace(/\D/g, ""));
-              }}
-              disabled={expiredOnlyFilter}
-              className="px-3 py-1.5 w-24 bg-white border border-slate-200 rounded-lg text-xs font-bold font-mono outline-none text-slate-800 focus:border-[#E61C24]"
-              placeholder="e.g. 30"
-            />
-            <span className="text-xs text-slate-500 font-medium">days out</span>
-
-            {/* Quick buttons */}
-            <div className="flex gap-1 items-center ml-2 border-l border-slate-200 pl-3">
-              {[15, 30, 60, 90].map((preset) => (
-                <button
-                  key={preset}
-                  onClick={() => {
-                    setExpiredOnlyFilter(false);
-                    setExpirationDays(preset.toString());
-                  }}
-                  className={`px-2 py-1 text-[10.5px] rounded font-bold transition ${
-                    !expiredOnlyFilter && expirationDays === preset.toString()
-                      ? "bg-[#18863A] text-white"
-                      : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                  }`}
-                >
-                  {preset}d
-                </button>
-              ))}
+      {/* TECHNICIAN SAFETY DOCUMENT EXPIRATION AUDIT & PROGNOSIS REPORT */}
+      <div id="document-expiration-report" className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-3xs overflow-hidden my-6">
+        <div className="p-4 sm:p-5 border-b border-slate-150 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 text-[9px] font-extrabold bg-[#E61C24]/10 text-[#E61C24] rounded border border-[#E61C24]/20 uppercase tracking-widest font-mono">
+                  Predictive SLA Watch
+                </span>
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">Reference Date: June 14, 2026</span>
+              </div>
+              <h3 className="font-extrabold text-sm text-slate-900 dark:text-slate-100 uppercase flex items-center gap-1.5">
+                <Clock className="w-5 h-5 text-[#E61C24]" /> Document Expiration Forecasting Report
+              </h3>
+              <p className="text-[10.5px] text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
+                Dynamically audit active technician certificates and credentials. Filter or input a customized day-count window to capture impending expirations and prevent unauthorized field work.
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Status Filter Toggles (Expired Only vs Impending) */}
-        <div className="lg:col-span-4 space-y-1">
-          <label className="text-[10px] uppercase font-bold text-slate-400 font-mono block">Auditing State Filter:</label>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setExpiredOnlyFilter(false)}
-              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold border transition flex items-center justify-center gap-1 ${
-                !expiredOnlyFilter
-                  ? "bg-slate-900 border-slate-900 text-white"
-                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              <Clock className="w-3.5 h-3.5" /> Expiring &lt;= {expirationDays || "0"} Days
-            </button>
-            <button
-              onClick={() => setExpiredOnlyFilter(true)}
-              className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold border transition flex items-center justify-center gap-1 ${
-                expiredOnlyFilter
-                  ? "bg-red-500 border-red-500 text-white shadow-3xs"
-                  : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-              }`}
-            >
-              <AlertTriangle className="w-3.5 h-3.5" /> Already Expired
-            </button>
+        {/* Prediction Controls Section */}
+        <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-800/10 grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
+          {/* Dynamic Days Range Selector */}
+          <div className="lg:col-span-5 space-y-1">
+            <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono block">Forecast Threshold (Days):</label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                value={expirationDays}
+                onChange={(e) => {
+                  setExpiredOnlyFilter(false);
+                  setExpirationDays(e.target.value.replace(/\D/g, ""));
+                }}
+                disabled={expiredOnlyFilter}
+                className="px-3 py-1.5 w-24 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-bold font-mono outline-none text-slate-800 dark:text-slate-100 focus:border-[#E61C24] disabled:opacity-60"
+                placeholder="e.g. 30"
+              />
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">days out</span>
+
+              {/* Quick buttons */}
+              <div className="flex gap-1 items-center sm:ml-2 sm:border-l border-slate-200 dark:border-slate-700 sm:pl-3">
+                {[15, 30, 60, 90].map((preset) => (
+                  <button
+                    key={preset}
+                    onClick={() => {
+                      setExpiredOnlyFilter(false);
+                      setExpirationDays(preset.toString());
+                    }}
+                    className={`px-2 py-1 text-[10.5px] rounded font-bold transition ${
+                      !expiredOnlyFilter && expirationDays === preset.toString()
+                        ? "bg-[#18863A] text-white"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    }`}
+                  >
+                    {preset}d
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Status Filter Toggles (Expired Only vs Impending) */}
+          <div className="lg:col-span-4 space-y-1">
+            <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono block">Auditing State Filter:</label>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setExpiredOnlyFilter(false)}
+                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold border transition flex items-center justify-center gap-1 ${
+                  !expiredOnlyFilter
+                    ? "bg-slate-900 dark:bg-slate-700 border-slate-900 dark:border-slate-700 text-white"
+                    : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" /> Expiring &lt;= {expirationDays || "0"} Days
+              </button>
+              <button
+                onClick={() => setExpiredOnlyFilter(true)}
+                className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-bold border transition flex items-center justify-center gap-1 ${
+                  expiredOnlyFilter
+                    ? "bg-red-500 border-red-500 text-white shadow-3xs"
+                    : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5" /> Already Expired
+              </button>
+            </div>
+          </div>
+
+          {/* Regional isolation option */}
+          <div className="lg:col-span-3 space-y-1">
+            <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono block">Hub Region presence:</label>
+            {isCentral ? (
+              <select
+                value={expirationBranchFilter}
+                onChange={(e) => setExpirationBranchFilter(e.target.value)}
+                className="text-xs p-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 dark:text-slate-200 outline-none w-full"
+              >
+                <option value="all">Global Safaricom Network</option>
+                {contractors.map(b => (
+                  <option key={b.id} value={b.id}>{b.name}</option>
+                ))}
+              </select>
+            ) : (
+              <div className="text-xs py-1.5 px-3 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-200 font-bold capitalize">
+                {contractors.find(b => b.id === currentUser?.contractorId)?.name || "Local Contractor Unit"}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Regional isolation option */}
-        <div className="lg:col-span-3 space-y-1">
-          <label className="text-[10px] uppercase font-bold text-slate-400 font-mono block">Hub Region presence:</label>
-          {isCentral ? (
-            <select
-              value={expirationBranchFilter}
-              onChange={(e) => setExpirationBranchFilter(e.target.value)}
-              className="text-xs p-1.5 bg-white border border-slate-200 rounded-lg font-bold text-slate-700 outline-none w-full"
-            >
-              <option value="all">Global Safaricom Network</option>
-              {contractors.map(b => (
-                <option key={b.id} value={b.id}>{b.name}</option>
-              ))}
-            </select>
+        {/* Expiring List Table results */}
+        <div className="overflow-x-auto">
+          {expiringDocsReport.length > 0 ? (
+            <table className="w-full text-xs text-left text-slate-700 dark:text-slate-300 divide-y divide-slate-150 dark:divide-slate-800 min-w-[760px]">
+              <thead className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800 text-[9px] uppercase tracking-wider font-extrabold text-slate-500 dark:text-slate-400">
+                <tr>
+                  <th className="p-3.5 pl-5">Holder / Contact</th>
+                  <th className="p-3.5">Regional presence</th>
+                  <th className="p-3.5">Document Audit Name</th>
+                  <th className="p-3.5">Expiration Date</th>
+                  <th className="p-3.5">Days Left (Prognosis)</th>
+                  <th className="p-3.5 text-center">Urgency Tier</th>
+                  <th className="p-3.5 pr-5 text-right">SLA Action Dispatch</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {expiringDocsReport.map((doc) => {
+                  const docBranch = contractors.find(b => b.id === doc.contractorId)?.name || "N/A";
+                  const techProfile = technicians.find(t => t.id === doc.technicianId);
+                  const isExpired = doc.remainingDays < 0;
+                  const { badge: urgencyBadge, label: urgencyLabel } = getUrgencyMeta(doc.remainingDays, isExpired);
+
+                  return (
+                    <tr key={doc.id} className="hover:bg-slate-50/40 dark:hover:bg-slate-800/40 transition">
+                      <td className="p-3.5 pl-5">
+                        <div className="font-extrabold text-slate-900 dark:text-slate-100">{doc.technicianName}</div>
+                        <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{techProfile?.phone || "+254 No Phone"}</div>
+                      </td>
+                      <td className="p-3.5 font-bold text-slate-600 dark:text-slate-300">{docBranch}</td>
+                      <td className="p-3.5">
+                        <div className="font-bold text-slate-800 dark:text-slate-200">{doc.type}</div>
+                        <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate max-w-sm mt-0.5">{doc.fileName}</div>
+                      </td>
+                      <td className="p-3.5 font-bold font-mono text-slate-700 dark:text-slate-300">{doc.expiryDate}</td>
+                      <td className="p-3.5">
+                        {isExpired ? (
+                          <span className="text-red-700 dark:text-red-400 font-extrabold flex items-center gap-1 text-[11px]">
+                            <AlertTriangle className="w-3.5 h-3.5" /> Expired {Math.abs(doc.remainingDays)}d ago
+                          </span>
+                        ) : (
+                          <span className="text-slate-800 dark:text-slate-200 font-extrabold pl-0.5 text-[11px]">
+                            {doc.remainingDays} days remaining
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-3.5 text-center">
+                        <span className={`inline-block px-2.5 py-1 rounded-full text-[9px] uppercase tracking-wider font-extrabold ${urgencyBadge}`}>
+                          {urgencyLabel}
+                        </span>
+                      </td>
+                      <td className="p-3.5 pr-5 text-right">
+                        {notifiedDocs[doc.id] ? (
+                          <span className="inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-extrabold border border-emerald-150 dark:border-emerald-500/20 px-2.5 py-1 rounded-lg text-[10px] shadow-3xs">
+                            <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Alert Dispatched
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setNotifiedDocs(prev => ({ ...prev, [doc.id]: true }));
+                            }}
+                            className={`px-3 py-1 bg-indigo-50 dark:bg-indigo-500/10 hover:bg-[#E61C24]/10 hover:text-[#E61C24] hover:border-[#E61C24]/50 border border-indigo-150 dark:border-indigo-500/20 text-indigo-700 dark:text-indigo-400 text-[10px] font-extrabold rounded-lg transition shadow-3xs flex items-center gap-1.5 ml-auto ${
+                              isExpired ? "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/20 hover:bg-red-100 dark:hover:bg-red-500/20" : ""
+                            }`}
+                          >
+                            Send SLA Alert
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           ) : (
-            <div className="text-xs py-1.5 px-3 bg-slate-100 border border-slate-200 rounded-lg text-slate-700 font-bold capitalize">
-              {contractors.find(b => b.id === currentUser?.contractorId)?.name || "Local Contractor Unit"}
+            <div className="p-12 text-center text-slate-500 dark:text-slate-400 py-16 flex flex-col items-center justify-center space-y-3.5 bg-slate-50/20 dark:bg-slate-800/10">
+              <CheckCircle2 className="w-14 h-14 text-emerald-500" />
+              <div className="space-y-1">
+                <p className="font-extrabold text-slate-800 dark:text-slate-100 uppercase tracking-widest text-xs font-mono">
+                  Safe Expiration State
+                </p>
+                <p className="text-slate-400 dark:text-slate-500 text-xs font-medium max-w-md mx-auto">
+                  No active credentials expire within {expiredOnlyFilter ? "the selected past window" : `${expirationDays || "0"} days`}. Regional field safety compliance is secure!
+                </p>
+              </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* Expiring List Table results */}
-      <div className="overflow-x-auto">
-        {expiringDocsReport.length > 0 ? (
-          <table className="w-full text-xs text-left text-slate-700 divide-y divide-slate-150">
-            <thead className="bg-slate-50 border-b border-slate-200 text-[9px] uppercase tracking-wider font-extrabold text-slate-500">
-              <tr>
-                <th className="p-3.5 pl-5">Holder / Contact</th>
-                <th className="p-3.5">Regional presence</th>
-                <th className="p-3.5">Document Audit Name</th>
-                <th className="p-3.5">Expiration Date</th>
-                <th className="p-3.5">Days Left (Prognosis)</th>
-                <th className="p-3.5 text-center">Urgency Tier</th>
-                <th className="p-3.5 pr-5 text-right">SLA Action Dispatch</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {expiringDocsReport.map((doc) => {
-                const docBranch = contractors.find(b => b.id === doc.contractorId)?.name || "N/A";
-                const techProfile = technicians.find(t => t.id === doc.technicianId);
-                const isExpired = doc.remainingDays < 0;
-
-                // Urgency mapping
-                let urgencyBadge = "bg-green-50 text-green-700 border border-green-150";
-                let urgencyLabel = "Low Risk";
-                if (isExpired) {
-                  urgencyBadge = "bg-red-50 text-red-700 border border-red-150 font-black";
-                  urgencyLabel = "CRITICAL: EXPIRED";
-                } else if (doc.remainingDays <= 15) {
-                  urgencyBadge = "bg-amber-50 text-amber-700 border border-amber-150 font-bold";
-                  urgencyLabel = "IMMEDIATE SLA EXPIRY";
-                } else if (doc.remainingDays <= 30) {
-                  urgencyBadge = "bg-yellow-50 text-yellow-700 border border-yellow-150 font-semibold";
-                  urgencyLabel = "WARNING WINDOW";
-                }
-
-                return (
-                  <tr key={doc.id} className="hover:bg-slate-50/40 transition">
-                    <td className="p-3.5 pl-5">
-                      <div className="font-extrabold text-slate-900">{doc.technicianName}</div>
-                      <div className="text-[10px] text-slate-400 font-mono mt-0.5">{techProfile?.phone || "+254 No Phone"}</div>
-                    </td>
-                    <td className="p-3.5 font-bold text-slate-600">{docBranch}</td>
-                    <td className="p-3.5">
-                      <div className="font-bold text-slate-800">{doc.type}</div>
-                      <div className="text-[10px] font-mono text-slate-400 truncate max-w-sm mt-0.5">{doc.fileName}</div>
-                    </td>
-                    <td className="p-3.5 font-bold font-mono text-slate-700">{doc.expiryDate}</td>
-                    <td className="p-3.5">
-                      {isExpired ? (
-                        <span className="text-red-700 font-extrabold flex items-center gap-1 text-[11px]">
-                          <AlertTriangle className="w-3.5 h-3.5" /> Expired {Math.abs(doc.remainingDays)}d ago
-                        </span>
-                      ) : (
-                        <span className="text-slate-800 font-extrabold pl-0.5 text-[11px]">
-                          {doc.remainingDays} days remaining
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-3.5 text-center">
-                      <span className={`inline-block px-2.5 py-1 rounded-full text-[9px] uppercase tracking-wider font-extrabold ${urgencyBadge}`}>
-                        {urgencyLabel}
-                      </span>
-                    </td>
-                    <td className="p-3.5 pr-5 text-right">
-                      {notifiedDocs[doc.id] ? (
-                        <span className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 font-extrabold border border-emerald-150 px-2.5 py-1 rounded-lg text-[10px] shadow-3xs">
-                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" /> Alert Dispatched
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => {
-                            setNotifiedDocs(prev => ({ ...prev, [doc.id]: true }));
-                          }}
-                          className={`px-3 py-1 bg-indigo-50 hover:bg-[#E61C24]/10 hover:text-[#E61C24] hover:border-[#E61C24]/50 border border-indigo-150 text-indigo-700 text-[10px] font-extrabold rounded-lg transition shadow-3xs flex items-center gap-1.5 ml-auto ${
-                            isExpired ? "bg-red-50 text-red-600 border-red-200 hover:bg-red-100" : ""
-                          }`}
-                        >
-                          Send SLA Alert
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        ) : (
-          <div className="p-12 text-center text-slate-500 py-16 flex flex-col items-center justify-center space-y-3.5 bg-slate-50/20">
-            <CheckCircle2 className="w-14 h-14 text-emerald-500" />
-            <div className="space-y-1">
-              <p className="font-extrabold text-slate-800 uppercase tracking-widest text-xs font-mono">
-                Safe Expiration State
-              </p>
-              <p className="text-slate-400 text-xs font-medium max-w-md mx-auto">
-                No active credentials expire within {expiredOnlyFilter ? "the selected past window" : `${expirationDays || "0"} days`}. Regional field safety compliance is secure!
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-
-    {/* Official Project Clearance and safety Gate Audit table */}
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-3xs">
-        <div className="p-4 bg-slate-550 border-b border-slate-150 flex items-center justify-between">
+      {/* Official Project Clearance and safety Gate Audit table */}
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-3xs">
+        <div className="p-4 bg-slate-550 dark:bg-slate-800/30 border-b border-slate-150 dark:border-slate-800 flex items-center justify-between gap-3">
           <div>
-            <h3 className="font-extrabold text-xs text-slate-900 uppercase">Subcontractor Site Clearance Ledger</h3>
-            <p className="text-[10px] text-slate-500 mt-0.5">Visual representation of real-time project risk thresholds and crew compliance rates.</p>
+            <h3 className="font-extrabold text-xs text-slate-900 dark:text-slate-100 uppercase">Subcontractor Site Clearance Ledger</h3>
+            <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Visual representation of real-time project risk thresholds and crew compliance rates.</p>
           </div>
-          <span className="text-[9px] uppercase font-bold text-slate-400 font-mono bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">
+          <span className="text-[9px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-full shrink-0">
             Records Count: {filteredProjects.length}
           </span>
         </div>
 
         <div className="overflow-x-auto">
-          <table id="site_clearance_table" className="w-full text-xs text-left text-slate-700">
-            <thead className="bg-slate-50/70 border-b border-slate-150 text-[9px] uppercase tracking-wider font-extrabold text-slate-500">
+          <table id="site_clearance_table" className="w-full text-xs text-left text-slate-700 dark:text-slate-300 min-w-[760px]">
+            <thead className="bg-slate-50/70 dark:bg-slate-800/50 border-b border-slate-150 dark:border-slate-800 text-[9px] uppercase tracking-wider font-extrabold text-slate-500 dark:text-slate-400">
               <tr>
                 <th className="p-4">Active Hub / Project</th>
                 <th className="p-4">Assigned Partner</th>
@@ -1678,12 +1717,12 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 <th className="p-4 text-center">Clearance Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {filteredProjects.map((p) => {
                 const partnerName = contractors.find(b => b.id === p.contractorId)?.name || "Not assigned";
                 const leadName = allUsers.find(u => u.id === p.projectLeadId)?.name || "Unassigned Lead";
                 const ehsOfficer = allUsers.find(u => u.id === p.ehsOfficerId)?.name || "Unassigned EHS";
-                
+
                 // average safety rating for crew profiles
                 const assignedIds = p.assignedTechnicianIds || [];
                 const matchedTechs = (technicians || []).filter(t => t && assignedIds.includes(t.id));
@@ -1691,16 +1730,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                   ? Math.round(matchedTechs.reduce((sum, t) => sum + safeNumber(t.overallEhsScore), 0) / matchedTechs.length)
                   : 80;
 
-                // compliance evaluation status
-                let evaluatedStatus = "Cleared";
-                let evaluatedStyle = "bg-emerald-50 text-emerald-800 border-emerald-150";
-                if (averageScore < 70) {
-                  evaluatedStatus = "Suspended Site Access";
-                  evaluatedStyle = "bg-red-50 text-red-800 border-red-150";
-                } else if (averageScore < 80) {
-                  evaluatedStatus = "Needs Inspection";
-                  evaluatedStyle = "bg-amber-50 text-amber-800 border-amber-150";
-                }
+                const { status: evaluatedStatus, style: evaluatedStyle } = getClearanceEvaluation(averageScore);
 
                 const projectMilestones = (milestones || []).filter(m => m.projectId === p.id);
                 let currentMilestone = projectMilestones.find(m => m.status === "In Progress" || m.status === "Blocked");
@@ -1713,33 +1743,28 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 const currentMilestoneTitle = currentMilestone ? currentMilestone.title : "Not Started";
 
                 return (
-                  <tr key={p.id} className="hover:bg-slate-50/50 transition">
-                    <td className="p-4 font-semibold text-slate-900">
+                  <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition">
+                    <td className="p-4 font-semibold text-slate-900 dark:text-slate-100">
                       <div className="truncate max-w-sm">{p.name}</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">{p.startDate} to {p.endDate}</div>
+                      <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{p.startDate} to {p.endDate}</div>
                     </td>
-                    <td className="p-4 font-medium text-slate-600">{partnerName}</td>
+                    <td className="p-4 font-medium text-slate-600 dark:text-slate-300">{partnerName}</td>
                     <td className="p-4">
-                      <div className="font-semibold text-slate-800 truncate max-w-[180px]" title={currentMilestoneTitle}>{currentMilestoneTitle}</div>
+                      <div className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[180px]" title={currentMilestoneTitle}>{currentMilestoneTitle}</div>
                       {currentMilestone && (
-                        <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase ${
-                          currentMilestone.status === "In Progress" ? "bg-blue-50 text-blue-700 border border-blue-150" :
-                          currentMilestone.status === "Blocked" ? "bg-red-50 text-red-700 border border-red-150 animate-pulse" :
-                          currentMilestone.status === "Completed" ? "bg-emerald-50 text-emerald-700 border border-emerald-150" :
-                          "bg-slate-50 text-slate-500 border border-slate-200"
-                        }`}>
+                        <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase ${getMilestoneBadgeClasses(currentMilestone.status)}`}>
                           {currentMilestone.status}
                         </span>
                       )}
                     </td>
-                    <td className="p-4 text-slate-500">{leadName}</td>
-                    <td className="p-4 text-slate-500">{ehsOfficer}</td>
+                    <td className="p-4 text-slate-500 dark:text-slate-400">{leadName}</td>
+                    <td className="p-4 text-slate-500 dark:text-slate-400">{ehsOfficer}</td>
                     <td className="p-4 text-center">
                       <div className="flex items-center justify-center gap-1">
-                        <span className={`text-[11px] font-bold ${averageScore >= 80 ? "text-emerald-600" : averageScore >= 70 ? "text-amber-500" : "text-red-500"}`}>
+                        <span className={`text-[11px] font-bold ${averageScore >= 80 ? "text-emerald-600 dark:text-emerald-400" : averageScore >= 70 ? "text-amber-500 dark:text-amber-400" : "text-red-500 dark:text-red-400"}`}>
                           {averageScore}%
                         </span>
-                        <span className="text-[10px] text-slate-400 font-normal">avg ({matchedTechs.length} crew)</span>
+                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal whitespace-nowrap">avg ({matchedTechs.length} crew)</span>
                       </div>
                     </td>
                     <td className="p-4 text-center">
@@ -1752,7 +1777,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
               })}
               {filteredProjects.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="bg-slate-50/50 p-12 text-center text-slate-400 text-xs italic">
+                  <td colSpan={7} className="bg-slate-50/50 dark:bg-slate-800/20 p-12 text-center text-slate-400 dark:text-slate-500 text-xs italic">
                     There are no recorded project scopes matching the compliance metrics.
                   </td>
                 </tr>

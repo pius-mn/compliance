@@ -128,7 +128,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         setIsSidebarOpen={setIsSidebarOpen}
       />
 
-      <main className="flex-1 flex flex-col min-h-0 overflow-hidden pb-20 lg:pb-0">
+      <main className="flex-1 flex flex-col min-h-0 overflow-hidden lg:pb-0">
         
         <header className="h-14 md:h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 sm:px-8 shrink-0 z-50">
           <div className="flex items-center gap-3">

@@ -160,7 +160,7 @@ export async function deleteSitePhoto(
     try {
       const parsed = JSON.parse(photo.description);
       milestoneId = parsed.milestoneId || "";
-    } catch (_e) {}
+    } catch {}
   }
 
   if (milestoneId) {
