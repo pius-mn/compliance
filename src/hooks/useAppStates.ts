@@ -1,64 +1,60 @@
-import { useState, useEffect } from "react";
-import { Role, User, Project, Milestone, TechnicianProfile, TechnicianDocument, AuditLog, Notification, Contractor, WorkRole, DocumentType, ComplianceFlag, SitePhoto } from "../types";
+import { useState, useEffect, useMemo } from "react";
+import type {
+  Role,
+  User,
+  Project,
+  Milestone,
+  TechnicianProfile,
+  TechnicianDocument,
+  AuditLog,
+  Notification,
+  Contractor,
+  WorkRole,
+  DocumentType,
+  ComplianceFlag,
+  SitePhoto,
+} from "../types";
 
 export function useAppStates() {
+  // ── Core Persistent States ─────────────────────────────────────
   const [user, setUser] = useState<User | null>(null);
+  const [authToken, setAuthToken] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isNotificationsDrawerOpen, setIsNotificationsDrawerOpen] = useState(false);
+
+  // ── Reference / Master Data ────────────────────────────────────
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [allRoles, setAllRoles] = useState<WorkRole[]>([]);
-  const [newRole, setNewRole] = useState({ name: "", documentTypeIds: [] as string[] });
   const [allDocumentTypes, setAllDocumentTypes] = useState<DocumentType[]>([]);
-  const [newDocumentType, setNewDocumentType] = useState({ name: "" });
+  const [contractors, setContractors] = useState<Contractor[]>([]);
+  const [predefinedMilestones, setPredefinedMilestones] = useState<string[]>([]);
+  const [predefinedPrerequisites, setPredefinedPrerequisites] = useState<string[]>([]);
 
+  // ── Main Application Data ──────────────────────────────────────
   const [projects, setProjects] = useState<Project[]>([]);
-  const [allMilestones, setAllMilestones] = useState<Milestone[]>([]);
   const [milestones, setMilestones] = useState<Milestone[]>([]);
+  const [allMilestones, setAllMilestones] = useState<Milestone[]>([]);
   const [technicians, setTechnicians] = useState<TechnicianProfile[]>([]);
   const [documents, setDocuments] = useState<TechnicianDocument[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [sitePhotos, setSitePhotos] = useState<SitePhoto[]>([]);
-  const [contractors, setContractors] = useState<Contractor[]>([]);
   const [complianceFlags, setComplianceFlags] = useState<ComplianceFlag[]>([]);
-  const [predefinedMilestones, setPredefinedMilestones] = useState<string[]>([]);
-  const [predefinedPrerequisites, setPredefinedPrerequisites] = useState<string[]>([]);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [authToken, setAuthToken] = useState<string | null>(null);
 
-  useEffect(() => {
-    const savedUser = localStorage.getItem("user");
-    if (savedUser) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setUser(JSON.parse(savedUser));
-    }
-    const savedToken = localStorage.getItem("authToken");
-    if (savedToken) {
-      setAuthToken(savedToken);
-    }
-    const theme = localStorage.getItem("theme");
-    if (theme === "dark") {
-      setIsDarkMode(true);
-    }
-    if (window.innerWidth >= 1024) {
-      setIsSidebarOpen(true);
-    }
-  }, []);
-  const [isNotificationsDrawerOpen, setIsNotificationsDrawerOpen] = useState(false);
-
-  // Search filter strings
+  // ── UI Filters & Pagination ────────────────────────────────────
   const [projectSearch, setProjectSearch] = useState("");
   const [techSearch, setTechSearch] = useState("");
   const [docSearch, setDocSearch] = useState("");
+  const [itemsPerPage, setItemsPerPage] = useState(10);
 
-  // Pagination states
-  const [itemsPerPage, setItemsPerPage] = useState(5);
-
-  // Loading States
+  // ── Loading States ─────────────────────────────────────────────
   const [actionLoading, setActionLoading] = useState(false);
   const [aiAuditing, setAiAuditing] = useState(false);
 
-  // Forms States
+  // ── Form & Modal States ────────────────────────────────────────
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+
   const [showAddProject, setShowAddProject] = useState(false);
   const [newProject, setNewProject] = useState({
     name: "",
@@ -67,7 +63,7 @@ export function useAppStates() {
     endDate: "2026-12-31",
     budget: "",
     contractorId: "",
-    rolloutDistance: ""
+    rolloutDistance: "",
   });
 
   const [newUser, setNewUser] = useState({
@@ -76,7 +72,7 @@ export function useAppStates() {
     role: "Field Technician" as Role,
     isCentral: false,
     phone: "",
-    specialization: ""
+    specialization: "",
   });
 
   const [showAddMilestone, setShowAddMilestone] = useState(false);
@@ -90,10 +86,10 @@ export function useAppStates() {
     weight: "20",
     dependencies: [] as string[],
     prerequisites: [] as string[],
-    prerequisiteNotes: ""
+    prerequisiteNotes: "",
   });
 
-  // Document upload form
+  // Document Management
   const [showUploadDoc, setShowUploadDoc] = useState(false);
   const [newDoc, setNewDoc] = useState({
     technicianId: "",
@@ -102,59 +98,104 @@ export function useAppStates() {
     fileName: "",
     documentText: "",
     previousVersionId: "",
-    expiryDate: ""
+    expiryDate: "",
   });
+
   const [uploadedFileBase64, setUploadedFileBase64] = useState<string | null>(null);
   const [uploadedFileMimeType, setUploadedFileMimeType] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
 
-  // Selected document for detailed auditing view
   const [viewingDoc, setViewingDoc] = useState<TechnicianDocument | null>(null);
   const [activeDocTab, setActiveDocTab] = useState<"audit" | "history">("audit");
   const [approvalComment, setApprovalComment] = useState("");
+  const [exportingCertDoc, setExportingCertDoc] = useState<TechnicianDocument | null>(null);
+
   const [verifiedAuditCheckpoints, setVerifiedAuditCheckpoints] = useState<Record<string, boolean>>({
     authenticity: false,
     expiration: false,
     ppe: false,
     nema: false,
-    protocols: false
+    protocols: false,
   });
-  const [exportingCertDoc, setExportingCertDoc] = useState<TechnicianDocument | null>(null);
 
-  // System general feedback alert
+  // Transient States
+  const [newRole, setNewRole] = useState({ name: "", documentTypeIds: [] as string[] });
+  const [newDocumentType, setNewDocumentType] = useState({ name: "" });
   const [sysAlert, setSysAlert] = useState<{ type: "success" | "error" | "info" | "warning"; message: string } | null>(null);
-
-  // AI draft report assistance
   const [aiAnalysisResult, setAiAnalysisResult] = useState<Record<string, unknown> | null>(null);
 
-  return {
+  // ── Hydration & Persistence ─────────────────────────────────────
+  useEffect(() => {
+    // Load saved data
+    const savedUser = localStorage.getItem("user");
+    if (savedUser) setUser(JSON.parse(savedUser));
+
+    const savedToken = localStorage.getItem("authToken");
+    if (savedToken) setAuthToken(savedToken);
+
+    const savedTheme = localStorage.getItem("theme");
+    if (savedTheme === "dark") {
+      setIsDarkMode(true);
+      document.documentElement.classList.add("dark");
+    } else if (savedTheme === "light") {
+      document.documentElement.classList.remove("dark");
+    }
+
+    if (window.innerWidth >= 1024) {
+      setIsSidebarOpen(true);
+    }
+  }, []);
+
+  // Persist dark mode
+  useEffect(() => {
+    if (isDarkMode) {
+      localStorage.setItem("theme", "dark");
+      document.documentElement.classList.add("dark");
+    } else {
+      localStorage.setItem("theme", "light");
+      document.documentElement.classList.remove("dark");
+    }
+  }, [isDarkMode]);
+
+  // ── Memoized Return Value (Prevents unnecessary re-renders) ─────
+  return useMemo(() => ({
+    // Core
     user, setUser,
+    authToken, setAuthToken,
     isDarkMode, setIsDarkMode,
+    isSidebarOpen, setIsSidebarOpen,
+    isNotificationsDrawerOpen, setIsNotificationsDrawerOpen,
+
+    // Reference Data
     allUsers, setAllUsers,
     allRoles, setAllRoles,
-    newRole, setNewRole,
     allDocumentTypes, setAllDocumentTypes,
-    newDocumentType, setNewDocumentType,
+    contractors, setContractors,
+    predefinedMilestones, setPredefinedMilestones,
+    predefinedPrerequisites, setPredefinedPrerequisites,
+
+    // Main Data
     projects, setProjects,
-    allMilestones, setAllMilestones,
     milestones, setMilestones,
+    allMilestones, setAllMilestones,
     technicians, setTechnicians,
     documents, setDocuments,
     auditLogs, setAuditLogs,
     notifications, setNotifications,
     sitePhotos, setSitePhotos,
-    contractors, setContractors,
     complianceFlags, setComplianceFlags,
-    predefinedMilestones, setPredefinedMilestones,
-    predefinedPrerequisites, setPredefinedPrerequisites,
-    isSidebarOpen, setIsSidebarOpen,
-    isNotificationsDrawerOpen, setIsNotificationsDrawerOpen,
+
+    // UI Controls
     projectSearch, setProjectSearch,
     techSearch, setTechSearch,
     docSearch, setDocSearch,
     itemsPerPage, setItemsPerPage,
+
+    // Loading
     actionLoading, setActionLoading,
     aiAuditing, setAiAuditing,
+
+    // Forms & UI
     selectedProjectId, setSelectedProjectId,
     showAddProject, setShowAddProject,
     newProject, setNewProject,
@@ -164,18 +205,36 @@ export function useAppStates() {
     updatingStatus, setUpdatingStatus,
     statusComments, setStatusComments,
     newMilestone, setNewMilestone,
+
     showUploadDoc, setShowUploadDoc,
     newDoc, setNewDoc,
     uploadedFileBase64, setUploadedFileBase64,
     uploadedFileMimeType, setUploadedFileMimeType,
     dragActive, setDragActive,
+
     viewingDoc, setViewingDoc,
     activeDocTab, setActiveDocTab,
     approvalComment, setApprovalComment,
     verifiedAuditCheckpoints, setVerifiedAuditCheckpoints,
     exportingCertDoc, setExportingCertDoc,
+
+    // Transient
+    newRole, setNewRole,
+    newDocumentType, setNewDocumentType,
     sysAlert, setSysAlert,
     aiAnalysisResult, setAiAnalysisResult,
-    authToken, setAuthToken
-  };
+  }), [
+    user, authToken, isDarkMode, isSidebarOpen, isNotificationsDrawerOpen,
+    allUsers, allRoles, allDocumentTypes, contractors,
+    predefinedMilestones, predefinedPrerequisites,
+    projects, milestones, allMilestones, technicians, documents,
+    auditLogs, notifications, sitePhotos, complianceFlags,
+    projectSearch, techSearch, docSearch, itemsPerPage,
+    actionLoading, aiAuditing,
+    selectedProjectId, showAddProject, newProject, newUser,
+    showAddMilestone, updatingMilestone, updatingStatus, statusComments, newMilestone,
+    showUploadDoc, newDoc, uploadedFileBase64, uploadedFileMimeType, dragActive,
+    viewingDoc, activeDocTab, approvalComment, verifiedAuditCheckpoints, exportingCertDoc,
+    newRole, newDocumentType, sysAlert, aiAnalysisResult,
+  ]);
 }
