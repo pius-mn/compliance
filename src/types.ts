@@ -63,12 +63,8 @@ export interface Milestone {
   description: string;
   status: "Pending" | "In Progress" | "Completed" | "Blocked";
   dueDate: string;
-  weight: number; // 0 to 100 percentage weight
-  dependencies: number[]; // Milestone IDs that must be completed first
-  prerequisites: string[]; // Predefined constraints like "Rollout Distance Approval", "Way Leave"
-  clearedPrerequisites: string[]; // Prerequisites that have been cleared
-  clearedDependencies?: number[]; // Dependencies that have been cleared
-  prerequisiteNotes?: string; // Additional documentation or context for clearance
+  dependencies: (number | string)[]; // Milestone IDs or constraint names that must be resolved first
+  clearedDependencies?: (number | string)[]; // Dependencies that have been cleared
   statusComments?: string; // Documenting why a milestone is in its current status or was updated
   completedAt?: string | null; // Date when the milestone was completed
 }
@@ -81,40 +77,49 @@ export interface TechnicianProfile {
   specialization: string;
   status: "Active" | "Suspended" | "On Leave" | "EHS Check Needed";
   lastEhsAuditDate: string | null;
+  /** Computed on-the-fly from work-role document requirements and approved documents. Not stored in DB. */
   overallEhsScore: number; // 0 to 100
   contractorId?: number | null; // contractor who manages this technician
   workRoleIds?: number[];
 }
 
+// ─── DO NOT RE-ADD REMOVED FIELDS ─────────────────────────────────────────
+// The following fields were permanently deleted from the `documents` table.
+// Do NOT re-add them here or anywhere in the codebase:
+//   - projectId          (too common to blanket-ban; guard this interface)
+//   - summary            (too common to blanket-ban; guard this interface)
+//   - approvalChainComments  (lint-flagged)
+//   - complianceResult       (lint-flagged)
+//   - extractedData          (lint-flagged)
+//   - flaggedIssues          (lint-flagged)
+//   - previousVersionId      (lint-flagged)
+// ────────────────────────────────────────────────────────────────────────────
+// ─── DO NOT RE-ADD REMOVED FIELDS ─────────────────────────────────────────
+// The following fields were permanently deleted from the `documents` table.
+// Do NOT re-add them here or anywhere in the codebase:
+//   - technicianName  (resolved via technicianId join)
+//   - type            (resolved via documentTypeId → documentTypes)
+//   - status          (replaced by rejected: boolean + approver ID columns)
+// ────────────────────────────────────────────────────────────────────────────
 export interface TechnicianDocument {
   id: number;
   technicianId: number;
+  /** Resolved at query time from technicians table — not stored in DB */
   technicianName: string;
   contractorId: number;
-  projectId?: number | null; // linked project ID
-  type: string; // The category name (e.g. PPE Audit) or name of DocumentType
-  documentTypeId?: number | null; // link to DocumentType ID if applicable
+  /** Resolved at query time from documentTypes table — not stored in DB */
+  type: string;
+  documentTypeId?: number | null;
   fileName: string;
   uploadDate: string;
-  status: "Pending Contractor Approval" | "Pending Central Approval" | "Approved" | "Rejected";
+  /** If true, the document was rejected at either approval level */
+  rejected: boolean;
   contractorApproverId: number | null;
   centralApproverId: number | null;
-  approvalChainComments: string[];
-  complianceResult: {
-    score: number; // calculated by AI or officer
-    issues: string[];
-    recommendations: string;
-    verifiedByAi: boolean;
-  } | null;
-  summary?: string | null; // concise summary
-  extractedData?: {
-    safetyProtocols?: string[];
-    environmentalImpacts?: string[];
-    incidentReports?: string[];
-  } | null; // extracted data points
-  flaggedIssues?: string[] | null; // potential issues flagged by AI
-  previousVersionId?: number | null; // link to previous version of this safety certificate
   expiryDate?: string | null; // expiration date of the certificate (YYYY-MM-DD)
+  fileData?: string | null;
+  fileMimeType?: string | null;
+  file_path?: string | null; // public URL path to file on disk (/uploads/documents/{id}/{filename})
 }
 
 export interface AuditLog {

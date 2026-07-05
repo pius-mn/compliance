@@ -2,17 +2,31 @@ import React, { useState } from "react";
 import { UserPlus, X, User as UserIcon, Mail, Phone, Briefcase } from "lucide-react";
 
 interface AddTechnicianFormProps {
-  onAdd: (tech: { name: string; email: string; phone: string; specialization: string }) => Promise<void>;
+  onAdd?: (tech: { name: string; email: string; phone: string; specialization: string }) => Promise<void>;
+  onUpdate?: (id: number | string, tech: { name: string; email?: string; phone: string; specialization: string }) => Promise<void>;
+  editId?: number | string | null;
+  initialData?: { name: string; email?: string; phone: string; specialization: string } | null;
   onClose?: () => void;
   actionLoading: boolean;
 }
 
-export const AddTechnicianForm: React.FC<AddTechnicianFormProps> = ({ onAdd, onClose, actionLoading }) => {
-  const [tech, setTech] = useState({ name: "", email: "", phone: "", specialization: "" });
+export const AddTechnicianForm: React.FC<AddTechnicianFormProps> = ({ onAdd, onUpdate, editId, initialData, onClose, actionLoading }) => {
+  const [tech, setTech] = useState({
+    name: initialData?.name || "",
+    email: initialData?.email || "",
+    phone: initialData?.phone || "",
+    specialization: initialData?.specialization || "",
+  });
+
+  const isEditMode = !!editId && !!onUpdate;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await onAdd(tech);
+    if (isEditMode && editId && onUpdate) {
+      await onUpdate(editId, tech);
+    } else if (onAdd) {
+      await onAdd(tech);
+    }
     setTech({ name: "", email: "", phone: "", specialization: "" });
   };
 
@@ -33,9 +47,13 @@ export const AddTechnicianForm: React.FC<AddTechnicianFormProps> = ({ onAdd, onC
           <UserPlus size={20} />
         </div>
         <h2 className="text-xl font-black text-slate-900 tracking-tight flex items-center gap-2">
-          Register New Technician
+          {isEditMode ? "Edit Technician" : "Register New Technician"}
         </h2>
-        <p className="text-xs text-slate-400 mt-0.5">Register a field technician to the contracting crew and assign EHS job roles</p>
+        <p className="text-xs text-slate-400 mt-0.5">
+          {isEditMode
+            ? "Update the field technician's profile details and core skill set"
+            : "Register a field technician to the contracting crew and assign EHS job roles"}
+        </p>
       </div>
         
       <div className="space-y-4">
@@ -64,7 +82,7 @@ export const AddTechnicianForm: React.FC<AddTechnicianFormProps> = ({ onAdd, onC
               value={tech.email} 
               onChange={(e) => setTech({...tech, email: e.target.value})} 
               className="w-full pl-10 pr-4 py-3 bg-slate-50 hover:bg-slate-100/50 focus:bg-white border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-[#18863A]/20 focus:border-[#18863A] transition-all outline-hidden" 
-              required 
+              {...(isEditMode ? {} : { required: true })}
             />
           </div>
         </div>
@@ -105,7 +123,9 @@ export const AddTechnicianForm: React.FC<AddTechnicianFormProps> = ({ onAdd, onC
         disabled={actionLoading} 
         className="w-full py-3.5 bg-[#18863A] hover:bg-[#156e2f] active:scale-99 text-white rounded-xl text-sm font-black transition-all disabled:opacity-50 cursor-pointer shadow-lg shadow-[#18863A]/10 mt-2"
       >
-        {actionLoading ? "Registering..." : "Complete Registration"}
+        {actionLoading
+          ? isEditMode ? "Saving..." : "Registering..."
+          : isEditMode ? "Save Changes" : "Complete Registration"}
       </button>
     </form>
   );

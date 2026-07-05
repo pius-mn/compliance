@@ -10,12 +10,12 @@ interface MilestoneCardProps {
   onToggleExpand: () => void;
   isActiveGate: boolean;
   canUpdateMilestones: boolean;
-  handleUpdateMilestonePrerequisites: (id: number, cleared: string[]) => void;
-  handleUpdateMilestoneClearedDependencies?: (id: number, cleared: number[]) => void;
-  handleUpdateMilestoneDependencies?: (id: number, dependencies: number[]) => void;
+  handleUpdateMilestoneClearedDependencies?: (id: number, cleared: (number | string)[]) => void;
+  handleUpdateMilestoneDependencies?: (id: number, dependencies: (number | string)[]) => void;
   handleUpdateMilestoneStatus: (id: number, status: Milestone["status"], comments?: string) => void;
   allMilestones: Milestone[];
   milestones: Milestone[];
+  predefinedPrerequisites: string[];
 }
 
 export const MilestoneCard: React.FC<MilestoneCardProps> = ({
@@ -24,12 +24,12 @@ export const MilestoneCard: React.FC<MilestoneCardProps> = ({
   onToggleExpand,
   isActiveGate,
   canUpdateMilestones,
-  handleUpdateMilestonePrerequisites,
   handleUpdateMilestoneClearedDependencies,
   handleUpdateMilestoneDependencies,
   handleUpdateMilestoneStatus,
   allMilestones,
   milestones,
+  predefinedPrerequisites,
 }) => {
   const [isEditing, setIsEditing] = React.useState(false);
   const m = milestone;
@@ -38,14 +38,12 @@ export const MilestoneCard: React.FC<MilestoneCardProps> = ({
   const isLockedBySubsequent = milestoneIndex !== -1 && milestoneIndex < milestones.length - 1;
   const isCurrentlyEditable = canUpdateMilestones && !isLockedBySubsequent;
 
-  const ehsPrereqs = m.prerequisites || [];
   const depPrereqs = (m.dependencies || []).filter(depId => 
     !milestones.some(x => x.id === depId) && 
     !allMilestones.some(x => x.id === depId)
   );
-  const totalPrereqs = ehsPrereqs.length + depPrereqs.length;
-  const clearedCount = (m.clearedPrerequisites?.length || 0) + 
-    ((m.clearedDependencies || []).filter(d => depPrereqs.includes(d)).length);
+  const totalPrereqs = depPrereqs.length;
+  const clearedCount = (m.clearedDependencies || []).filter(d => depPrereqs.includes(d)).length;
 
   const borderClass = m.status === 'Completed' ? 'border-l-4 border-l-emerald-500' :
                       m.status === 'In Progress' ? 'border-l-4 border-l-amber-500' :
@@ -142,42 +140,15 @@ export const MilestoneCard: React.FC<MilestoneCardProps> = ({
           )}
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Prerequisites EHS Checklists */}
+            {/* Dependency Clearances */}
             <div className="space-y-2">
               <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                 <ShieldCheck className="w-4 h-4 text-emerald-500" />
                 EHS Compliance & Clearances
               </p>
               
-              {(m.prerequisites && m.prerequisites.length > 0) || (depPrereqs.length > 0) ? (
+              {depPrereqs.length > 0 ? (
                 <div className="space-y-1.5">
-                  {m.prerequisites?.map((prereq) => {
-                    const isCleared = m.clearedPrerequisites?.includes(prereq);
-                    return (
-                      <label
-                        key={prereq}
-                        className="flex items-center gap-2.5 p-2 bg-white hover:bg-slate-50 rounded-lg cursor-pointer transition-all border border-slate-200/60"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isCleared}
-                          disabled={!isCurrentlyEditable}
-                          onChange={() => {
-                            const currentCleared = m.clearedPrerequisites || [];
-                            const updated = isCleared
-                              ? currentCleared.filter((p) => p !== prereq)
-                              : [...currentCleared, prereq];
-                            handleUpdateMilestonePrerequisites(m.id, updated);
-                          }}
-                          className="rounded border-slate-300 text-red-600 focus:ring-red-500 w-3.5 h-3.5"
-                        />
-                        <span className={`text-xs font-medium ${isCleared ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                          {prereq}
-                        </span>
-                      </label>
-                    );
-                  })}
-
                   {depPrereqs.map((depPrereq) => {
                     const isCleared = m.clearedDependencies?.includes(depPrereq);
                     return (
@@ -209,7 +180,7 @@ export const MilestoneCard: React.FC<MilestoneCardProps> = ({
                   })}
                 </div>
               ) : (
-                <p className="text-xs text-slate-400 italic">No specific EHS pre-requisites attached to this gateway.</p>
+                <p className="text-xs text-slate-400 italic">No dependency constraints attached to this gateway.</p>
               )}
             </div>
 
@@ -252,14 +223,14 @@ export const MilestoneCard: React.FC<MilestoneCardProps> = ({
                 <p className="text-xs text-slate-400 italic">No external gate blockers configured.</p>
               )}
 
-              {isCurrentlyEditable && handleUpdateMilestoneDependencies && (
+              {isCurrentlyEditable && handleUpdateMilestoneDependencies && predefinedPrerequisites && predefinedPrerequisites.length > 0 && (
                 <div className="relative">
                   <select
                     value=""
                     onChange={(e) => {
-                      const val = Number(e.target.value);
-                      if (!isNaN(val) && handleUpdateMilestoneDependencies) {
-                        const currentDeps = m.dependencies || [];
+                      const val = e.target.value;
+                      if (val && handleUpdateMilestoneDependencies) {
+                        const currentDeps = (m.dependencies || []) as (number | string)[];
                         if (!currentDeps.includes(val)) {
                           handleUpdateMilestoneDependencies(m.id, [...currentDeps, val]);
                         }
@@ -268,8 +239,8 @@ export const MilestoneCard: React.FC<MilestoneCardProps> = ({
                     className="w-full text-xs bg-white border border-slate-200 rounded-lg px-3 py-1.5 outline-none text-slate-500 hover:bg-slate-50 cursor-pointer appearance-none animate-none"
                   >
                     <option value="" disabled>+ Add Dependency Block</option>
-                    {["Rollout Distance Approval", "Way Leave Clearance", "Site Access Permission", "Permits & Regulatory Approval", "Material Procurement Lead Time"]
-                      .filter((dep) => !(m.dependencies || []).includes(Number(dep)))
+                    {predefinedPrerequisites
+                      .filter((dep) => !((m.dependencies || []) as (number | string)[]).includes(dep))
                       .map((dep) => (
                         <option key={dep} value={dep}>
                           {dep}

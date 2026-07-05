@@ -1,4 +1,4 @@
-import { Role, Contractor, TechnicianProfile, TechnicianDocument, WorkRole } from "../types";
+import { Role, Contractor } from "../types";
 
 /**
  * Generate the next sequential integer ID for a collection.
@@ -84,48 +84,96 @@ export const safeString = (v: unknown, fallback: string = ""): string => {
   }
 };
 
-// Helper for safety & role compliance score calculations
-export const getComputedEhsScore = (
-  t: TechnicianProfile,
-  documents: TechnicianDocument[],
-  allRoles: WorkRole[]
-) => {
-  if (!t) return 0;
-  const essentials = [
-    { name: "PPE Audit", docTypeId: null },
-    { name: "Risk Assessment (RAMS)", docTypeId: null },
-    { name: "Job Safety Analysis", docTypeId: null }
-  ];
-  
-  let roleIds = t.workRoleIds;
-  if (!Array.isArray(roleIds)) roleIds = [];
+/**
+ * Build a lookup map: techId → Set of document type IDs that have at least
+ * one approved + non-expired document.
+ *
+ * Resolves name-based document type matches (when a document has no
+ * documentTypeId but its `type` matches a DocumentType name).
+ */
+export function buildApprovedDocLookup(
+  documents: { technicianId: number; documentTypeId: number | null; rejected: boolean; contractorApproverId: number | null; centralApproverId: number | null; expiryDate: string | null }[],
+): Map<number, Set<number>> {
+  const lookup = new Map<number, Set<number>>();
+  const now = Date.now();
 
-  const roleDocIds = Array.from(new Set(
-    roleIds.flatMap(roleId => {
-      const role = (allRoles || []).find(r => r && r.id === roleId);
-      return role?.documentTypeIds || [];
-    })
-  ));
+  for (const doc of documents) {
+    // Only fully-approved (not rejected, both approvers set) documents count
+    if (doc.rejected) continue;
+    if (!doc.contractorApproverId || !doc.centralApproverId) continue;
+    // Skip expired documents
+    if (doc.expiryDate && new Date(doc.expiryDate).getTime() < now) continue;
 
-  const mergedRequirements = [
-    ...essentials,
-    ...roleDocIds.map(id => ({ name: null, docTypeId: id }))
-  ];
+    if (!doc.documentTypeId) continue;
 
-  let fulfilledCount = 0;
-  mergedRequirements.forEach(req => {
-    const hasDoc = (documents || []).find(d => 
-      d && d.technicianId === t.id && 
-      (req.docTypeId ? d.documentTypeId === req.docTypeId : d.type === req.name) && 
-      (d.status === "Approved" || d.status === "Pending Contractor Approval" || d.status === "Pending Central Approval")
-    );
-    if (hasDoc) fulfilledCount++;
-  });
-
-  const reqRatio = mergedRequirements.length > 0 ? (fulfilledCount / mergedRequirements.length) : 0;
-  let rawScore: unknown = t.overallEhsScore;
-  if (typeof rawScore !== 'number') {
-    rawScore = safeNumber(rawScore);
+    let set = lookup.get(doc.technicianId);
+    if (!set) {
+      set = new Set<number>();
+      lookup.set(doc.technicianId, set);
+    }
+    set.add(doc.documentTypeId);
   }
-  return Math.round((rawScore as number) * reqRatio);
-};
+
+  return lookup;
+}
+
+/**
+ * Compute a technician's overallEhsScore on-the-fly from their work roles
+ * and a pre-built approved-document lookup.
+ *
+ * @param techId - Technician ID
+ * @param workRoleIds - IDs of the work roles assigned to this technician
+ * @param workRoles - All work roles (used to map role IDs to document type IDs)
+ * @param approvedDocLookup - techId → Set of approved document type IDs
+ *
+ * Returns 100 when no documents are required (no roles or roles with no
+ * document type requirements). Returns 0 when no roles are assigned.
+ */
+
+/**
+ * Compute the display status of a document from its approval fields.
+ *
+ * The `documents` table no longer stores a `status` column; status is
+ * derived from `rejected`, `contractorApproverId`, and `centralApproverId`.
+ */
+export function getDocStatus(doc: {
+  rejected: boolean;
+  contractorApproverId: number | null | undefined;
+  centralApproverId: number | null | undefined;
+}): "Approved" | "Pending Central Approval" | "Pending Contractor Approval" | "Rejected" {
+  if (doc.rejected) return "Rejected";
+  if (doc.contractorApproverId && doc.centralApproverId) return "Approved";
+  if (doc.contractorApproverId) return "Pending Central Approval";
+  return "Pending Contractor Approval";
+}
+
+export function computeTechnicianEhsScore(
+  techId: number,
+  workRoleIds: number[] | undefined,
+  workRoles: { id: number; documentTypeIds: number[] }[],
+  approvedDocLookup: Map<number, Set<number>>
+): number {
+  if (!workRoleIds || workRoleIds.length === 0) return 0;
+
+  const requiredDocTypeIds = new Set<number>();
+  for (const roleId of workRoleIds) {
+    const role = workRoles.find((r) => r.id === roleId);
+    if (role && role.documentTypeIds) {
+      role.documentTypeIds.forEach((id) => requiredDocTypeIds.add(id));
+    }
+  }
+
+  if (requiredDocTypeIds.size === 0) return 100;
+
+  const techApproved = approvedDocLookup.get(techId);
+  if (!techApproved || techApproved.size === 0) return 0;
+
+  let approvedCount = 0;
+  for (const reqDocId of requiredDocTypeIds) {
+    if (techApproved.has(reqDocId)) approvedCount++;
+  }
+
+  return Math.round((approvedCount / requiredDocTypeIds.size) * 100);
+}
+
+

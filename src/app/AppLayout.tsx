@@ -1,14 +1,11 @@
 "use client";
 
 import React, { Suspense } from "react";
-import { usePathname } from "next/navigation";
-import { 
+import { usePathname } from "next/navigation";import {
   Menu, 
   Bell, 
   Building2, 
   RefreshCw, 
-  AlertTriangle,
-  CheckCircle
 } from "lucide-react";
 
 // Views
@@ -23,11 +20,6 @@ import { useApp } from "../context/AppContext";
 import { useSSE } from "../hooks/useSSE";
 import LoadingFallback from "../components/LoadingFallback";
 
-const AlertCheckIcon = ({ type }: { type: string }) => {
-  if (type === 'error') return <AlertTriangle className="w-4 h-4" />;
-  return <CheckCircle className="w-4 h-4" />;
-};
-
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const {
     user,
@@ -39,8 +31,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     notifications,
     setNotifications,
     documents,
-    sysAlert,
-    setSysAlert,
     refetchData,
     handleLogout,
     handleLogin,
@@ -92,7 +82,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     if (!d) return false;
     if (d.status !== "Pending Contractor Approval" && d.status !== "Pending Central Approval") return false;
     if (user && !user.isCentral && user.contractorId) return d.contractorId === user.contractorId;
-    if (d.complianceResult && (d.complianceResult as Record<string, unknown>).verifiedByAi === false) return false;
     return true;
   });
   const pendingApprovalsCount = pendingApprovals.length;
@@ -178,18 +167,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             </button>
           </div>
         </header>
-
-        {sysAlert && (
-          <div className="px-4 sm:px-8 pt-4">
-            <div className={`p-4 rounded-[20px] border-2 flex items-center justify-between animate-in slide-in-from-top-4 duration-500 ${sysAlert.type === 'error' ? 'bg-red-50 border-red-100 text-red-800' : 'bg-emerald-50 border-emerald-200 text-emerald-800'}`}>
-              <div className="flex items-center gap-3">
-                <AlertCheckIcon type={sysAlert.type} />
-                <p className="text-xs font-black uppercase tracking-widest">{sysAlert.message}</p>
-              </div>
-              <button onClick={() => setSysAlert(null)} className="p-1 hover:opacity-50">×</button>
-            </div>
-          </div>
-        )}
 
         <div className="flex-1 flex flex-col min-h-0 custom-scrollbar mobile-scrolling touch-scroll">
           {children}

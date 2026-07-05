@@ -1,6 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useMemo, useCallback, useRef, useEffect } from "react";
+import toast from "react-hot-toast";
 import { useAppStates } from "../hooks/useAppStates";
 import { useProjectActions } from "../hooks/useProjectActions";
 import { useDocumentActions } from "../hooks/useDocumentActions";
@@ -33,11 +34,11 @@ interface AppContextValue {
   isDarkMode: boolean;
   isSidebarOpen: boolean;
   isNotificationsDrawerOpen: boolean;
-  sysAlert: { type: "success" | "error" | "info" | "warning"; message: string } | null;
 
   handleLogin: (data: LoginData) => void;
   handleLogout: () => void;
   triggerBannerAlert: (type: "success" | "error" | "info" | "warning", message: string) => void;
+  triggerToast: (type: "success" | "error", message: string) => void;
   refetchData: (collections: CollectionKey[]) => Promise<void>;
 
   // Lazy data fetchers
@@ -61,19 +62,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const states = useAppStates();
   const API_BASE = "/api/v1";
 
-  const alertTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-
   const triggerBannerAlert = useCallback((type: "success" | "error" | "info" | "warning", message: string) => {
-    if (alertTimeoutRef.current) {
-      clearTimeout(alertTimeoutRef.current);
+    const opts = { duration: 3000 };
+    switch (type) {
+      case "success":
+        toast.success(message, opts);
+        break;
+      case "error":
+        toast.error(message, opts);
+        break;
+      case "warning":
+      case "info":
+      default:
+        toast(message, { ...opts, icon: type === "warning" ? "⚠️" : "ℹ️" });
+        break;
     }
+  }, []);
 
-    states.setSysAlert({ type, message });
-    alertTimeoutRef.current = setTimeout(() => {
-      states.setSysAlert(null);
-      alertTimeoutRef.current = null;
-    }, 3000);
-  }, [states.setSysAlert]);
+  const triggerToast = useCallback((type: "success" | "error", message: string) => {
+    if (type === "success") {
+      toast.success(message, { duration: 3500 });
+    } else {
+      toast.error(message, { duration: 3500 });
+    }
+  }, []);
 
   const handleLogin = useCallback(({ user, token }: LoginData) => {
     states.setUser(user);
@@ -120,6 +132,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [ds, API_BASE]
   );
 
+  // ── Global auth:expired handler (debounced) ──────────────────────────────
+  // When apiFetch detects a 401 (expired/invalid token), this listener fires
+  // to log the user out and redirect to the login page with a banner message.
+  // Because multiple in-flight requests may all return 401 simultaneously,
+  // the handler is debounced: the first event triggers immediately, then
+  // subsequent events are ignored for DEBOUNCE_MS. The gate resets after
+  // that window so a brand-new session that later expires also gets handled.
+  useEffect(() => {
+    const DEBOUNCE_MS = 2000;
+    let expiredTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const handleAuthExpired = () => {
+      if (expiredTimer) return; // Still within the debounce window — ignore
+
+      // Show a toast before logout — the Toaster lives in providers.tsx
+      // (outside AppLayout), so it stays mounted even after the user is
+      // redirected to the Login view and the toast remains visible.
+      toast.error("Your session has expired. Please sign in again.", { duration: 5000, id: "session-expired" });
+      handleLogout();
+
+      // Open the gate again after DEBOUNCE_MS so a new session expiry
+      // later on (login → token expires again) is still caught.
+      expiredTimer = setTimeout(() => {
+        expiredTimer = null;
+      }, DEBOUNCE_MS);
+    };
+
+    window.addEventListener("auth:expired", handleAuthExpired);
+    return () => {
+      window.removeEventListener("auth:expired", handleAuthExpired);
+      if (expiredTimer) clearTimeout(expiredTimer);
+    };
+  }, [handleLogout]);
+
   // Initial data sync (reference + notifications)
   const initialFetchRef = useRef(false);
 
@@ -164,6 +210,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       handleLogin,
       handleLogout,
       triggerBannerAlert,
+      triggerToast,
       refetchData,
     }),
     [

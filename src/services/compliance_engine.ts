@@ -116,7 +116,7 @@ export function runComplianceScan(
               d.type.toLowerCase().includes("nema") ||
               d.type.toLowerCase().includes("eia") ||
               d.type.toLowerCase().includes("impact")) &&
-            d.status === "Approved"
+            !d.rejected && d.contractorApproverId && d.centralApproverId
         );
 
         if (environmentalDocs.length === 0) {
@@ -158,11 +158,9 @@ export function runComplianceScan(
 
     const isExpired =
       isExpiredByDate ||
-      doc.fileName.toLowerCase().includes("expired") ||
-      (doc.summary && doc.summary.toLowerCase().includes("expired")) ||
-       (Array.isArray(doc.flaggedIssues) && doc.flaggedIssues.some((issue) => issue.toLowerCase().includes("expired")));
+      doc.fileName.toLowerCase().includes("expired");
 
-    if (isExpired && doc.status !== "Rejected") {
+    if (isExpired && !doc.rejected) {
       const ruleName = "Regulatory Certification Validity";
       const key = makeIssueKey(doc.id, ruleName);
       activeScannedKeys.add(key);
@@ -186,9 +184,9 @@ export function runComplianceScan(
   });
 
   // 5. OSHA SAFETY/PPE FIELD DEFIENCY (OSHA Standard 1910.132 PPE Audit check)
-  // Generates flags for documents with very low scores or specific complianceResult issues
+  // Generates flags for rejected documents
   documents.forEach((doc) => {
-    if (doc.status === "Rejected") {
+    if (doc.rejected) {
       const ruleName = "Safaricom Core PPE Protocol Failure";
       const key = makeIssueKey(doc.id, ruleName);
       activeScannedKeys.add(key);
@@ -204,31 +202,7 @@ export function runComplianceScan(
           ruleName,
           severity: "High",
           status: "Active",
-          description: `Critical EHS Document "${doc.fileName}" has been REJECTED. Safety comments: ${doc.approvalChainComments[doc.approvalChainComments.length - 1] || "Rejected during EHS review."}`,
-          flaggedAt: currentDate.toISOString()
-        });
-      }
-    } else if (doc.complianceResult && doc.complianceResult.score < 75) {
-      const ruleName = "OSHA Site Safety PPE Deficiency (Standard 1910.132)";
-      const key = makeIssueKey(doc.id, ruleName);
-      activeScannedKeys.add(key);
-
-      const exists = currentFlags.find((f) => f.targetId === doc.id && f.ruleName === ruleName && f.status === "Active");
-      if (!exists) {
-        const issuesText = doc.complianceResult.issues.length > 0 
-          ? `Issues highlighted: ${doc.complianceResult.issues.join(", ")}` 
-          : "PPE score scored below 75 compliance percent threshold.";
-          
-        newFlags.push({
-          id: nextFlagId(),
-          targetId: doc.id,
-          targetType: "document",
-          targetName: doc.fileName,
-          standard: "OSHA",
-          ruleName,
-          severity: "Medium",
-          status: "Active",
-          description: `EHS Assessment file "${doc.fileName}" scored low compliance rating (${doc.complianceResult.score}%). ${issuesText}`,
+          description: `Critical EHS Document "${doc.fileName}" has been REJECTED.`,
           flaggedAt: currentDate.toISOString()
         });
       }
@@ -241,8 +215,8 @@ export function runComplianceScan(
       // If document flag was active, but document has been deleted or approved since:
       if (flag.targetType === "document") {
         const doc = documents.find((d) => d.id === flag.targetId);
-        // If document was approved, we can resolve safety/PPE or validity flags!
-        if (doc && doc.status === "Approved") {
+        // If document was fully approved (not rejected, both approvers set), resolve flags
+        if (doc && !doc.rejected && doc.contractorApproverId && doc.centralApproverId) {
           return {
             ...flag,
             status: "Resolved",

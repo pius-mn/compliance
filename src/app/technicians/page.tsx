@@ -6,7 +6,7 @@ import { usePageData } from "../../hooks/usePageData";
 import { TechniciansView } from "../../views/TechniciansView";
 import { apiFetchPage } from "../../utils/apiFetch";
 import { usePageParam } from "../../hooks/usePageParam";
-import { Role } from "../../types";
+import { Role, DocumentType } from "../../types";
 import type { TechnicianProfile } from "../../types";
 
 export default function TechniciansPage() {
@@ -23,6 +23,7 @@ export default function TechniciansPage() {
     setShowUploadDoc,
     setActionLoading,
     triggerBannerAlert,
+    triggerToast,
     refetchData,
     setTechnicians,
     fetchEHSDocumentsData,
@@ -158,7 +159,7 @@ export default function TechniciansPage() {
       });
 
       if (res.ok) {
-        triggerBannerAlert("success", "Technician deleted successfully!");
+        triggerToast("success", "Technician deleted successfully!");
         refetchData(["users", "technicians"]);
       } else {
         const err = await res.json().catch(() => ({}));
@@ -184,7 +185,14 @@ export default function TechniciansPage() {
       contractors={contractors}
       documents={documents}
       onUpload={(technicianId, docTypeName?: string) => {
-        setNewDoc({...newDoc, technicianId, type: docTypeName || ""});
+        // Resolve documentTypeId from the type name when pre-selected from a work role
+        const matchedDt = docTypeName ? (appState.allDocumentTypes as DocumentType[]).find((dt: DocumentType) => dt.name === docTypeName) : null;
+        setNewDoc({
+          ...newDoc,
+          technicianId,
+          type: docTypeName || "",
+          documentTypeId: matchedDt ? String(matchedDt.id) : "",
+        });
         setShowUploadDoc(true);
       }}
       techsTotal={techsTotal}

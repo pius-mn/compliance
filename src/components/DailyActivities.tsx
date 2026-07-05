@@ -1,5 +1,6 @@
 import React from "react";
-import { Camera, Plus, X, AlertTriangle, ShieldCheck, Image as ImageIcon, Calendar, Eye, Trash2, Save, CheckCircle, XCircle } from "lucide-react";
+import toast from "react-hot-toast";
+import { Camera, Plus, AlertTriangle, ShieldCheck, Image as ImageIcon, Calendar, Eye, Trash2, Save } from "lucide-react";
 import { SitePhoto, User, Role, Project } from "../types";
 import { apiFetchJson } from "../utils/apiFetch";
 
@@ -108,14 +109,7 @@ export const DailyActivities: React.FC<DailyActivitiesProps> = ({
   const [aiMissedItems, setAiMissedItems] = React.useState<string[] | null>(null);
   const [aiAnalyzing, setAiAnalyzing] = React.useState(false);
 
-  // Toast notification state
-  const [toast, setToast] = React.useState<{ type: "success" | "error"; message: string } | null>(null);
-
-  React.useEffect(() => {
-    if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 3500);
-    return () => clearTimeout(timer);
-  }, [toast]);
+  // Toast notifications now handled by react-hot-toast (global Toaster in AppLayout)
 
   // Photos loaded per-date from the API (same as notes)
   const [currentDayPhotos, setCurrentDayPhotos] = React.useState<SitePhoto[]>([]);
@@ -447,13 +441,13 @@ export const DailyActivities: React.FC<DailyActivitiesProps> = ({
 
                       // 3. Show toast
                       if (aiError) {
-                        setToast({ type: "error", message: "Notes saved, but AI rating unavailable" });
+                        toast.error("Notes saved, but AI rating unavailable");
                       } else {
-                        setToast({ type: "success", message: `Notes saved — AI rating: ${score}%` });
+                        toast.success(`Notes saved — AI rating: ${score}%`);
                       }
                     } catch (e) {
                       console.error("Failed to save notes:", e);
-                      setToast({ type: "error", message: "Failed to save notes" });
+                      toast.error("Failed to save notes");
                     } finally {
                       setAiAnalyzing(false);
                     }
@@ -561,29 +555,7 @@ export const DailyActivities: React.FC<DailyActivitiesProps> = ({
           )}
         </div>
       </div>
-      {/* Toast Notification */}
-      {toast && (
-        <div
-          className={`fixed bottom-6 right-6 z-[300] flex items-center gap-2 px-4 py-2.5 rounded-lg shadow-xl border text-xs font-semibold animate-in slide-in-from-right-2 fade-in duration-200 ${
-            toast.type === "success"
-              ? "bg-emerald-50 border-emerald-200 text-emerald-800"
-              : "bg-red-50 border-red-200 text-red-800"
-          }`}
-        >
-          {toast.type === "success" ? (
-            <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
-          ) : (
-            <XCircle className="w-4 h-4 text-red-500 shrink-0" />
-          )}
-          <span>{toast.message}</span>
-          <button
-            onClick={() => setToast(null)}
-            className="ml-2 p-0.5 hover:bg-black/5 rounded transition-colors cursor-pointer"
-          >
-            <X className="w-3 h-3" />
-          </button>
-        </div>
-      )}
+      {/* Toasts are rendered globally by react-hot-toast Toaster in AppLayout */}
     </div>
   );
 };

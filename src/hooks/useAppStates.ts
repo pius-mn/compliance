@@ -83,10 +83,7 @@ export function useAppStates() {
     title: "",
     description: "",
     dueDate: new Date().toISOString().split("T")[0],
-    weight: "20",
     dependencies: [] as string[],
-    prerequisites: [] as string[],
-    prerequisiteNotes: "",
   });
 
   // Document Management
@@ -97,7 +94,7 @@ export function useAppStates() {
     documentTypeId: "",
     fileName: "",
     documentText: "",
-    previousVersionId: "",
+
     expiryDate: "",
   });
 
@@ -121,17 +118,49 @@ export function useAppStates() {
   // Transient States
   const [newRole, setNewRole] = useState({ name: "", documentTypeIds: [] as string[] });
   const [newDocumentType, setNewDocumentType] = useState({ name: "" });
-  const [sysAlert, setSysAlert] = useState<{ type: "success" | "error" | "info" | "warning"; message: string } | null>(null);
   const [aiAnalysisResult, setAiAnalysisResult] = useState<Record<string, unknown> | null>(null);
 
   // ── Hydration & Persistence ─────────────────────────────────────
   useEffect(() => {
     // Load saved data
     const savedUser = localStorage.getItem("user");
-    if (savedUser) setUser(JSON.parse(savedUser));
+    if (savedUser) {
+      const parsed = JSON.parse(savedUser);
+      setUser(parsed);
+
+      // Validate stored token against the server — if expired/invalid,
+      // clear the auth state so the login screen shows instead.
+      const savedToken = localStorage.getItem("authToken");
+      if (savedToken) {
+        setAuthToken(savedToken);
+        fetch("/api/v1/auth/me", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${savedToken}` },
+        })
+          .then((res) => {
+            if (!res.ok) {
+              // Token is invalid/expired — clear auth state
+              localStorage.removeItem("user");
+              localStorage.removeItem("authToken");
+              setUser(null);
+              setAuthToken(null);
+            }
+          })
+          .catch(() => {
+            // Network error — keep the cached user; they'll be logged out
+            // on the first actual API call that returns 401.
+          });
+      } else {
+        // No token at all — can't authenticate
+        localStorage.removeItem("user");
+        setUser(null);
+      }
+    }
 
     const savedToken = localStorage.getItem("authToken");
-    if (savedToken) setAuthToken(savedToken);
+    if (savedToken) {
+      setAuthToken(savedToken);
+    }
 
     const savedTheme = localStorage.getItem("theme");
     if (savedTheme === "dark") {
@@ -221,7 +250,6 @@ export function useAppStates() {
     // Transient
     newRole, setNewRole,
     newDocumentType, setNewDocumentType,
-    sysAlert, setSysAlert,
     aiAnalysisResult, setAiAnalysisResult,
   }), [
     user, authToken, isDarkMode, isSidebarOpen, isNotificationsDrawerOpen,
@@ -235,6 +263,6 @@ export function useAppStates() {
     showAddMilestone, updatingMilestone, updatingStatus, statusComments, newMilestone,
     showUploadDoc, newDoc, uploadedFileBase64, uploadedFileMimeType, dragActive,
     viewingDoc, activeDocTab, approvalComment, verifiedAuditCheckpoints, exportingCertDoc,
-    newRole, newDocumentType, sysAlert, aiAnalysisResult,
+    newRole, newDocumentType, aiAnalysisResult,
   ]);
 }

@@ -1,6 +1,6 @@
 import React from "react";
 import { TechnicianProfile } from "../types";
-import { safeJson } from "../utils/helpers";
+import { safeJson, getDocStatus } from "../utils/helpers";
 import { apiFetch, apiFetchJson } from "../utils/apiFetch";
 import type { CollectionKey } from "../utils/dataSync";
 
@@ -58,7 +58,7 @@ export function useDocumentActions(
     setAiAuditing(true);
     setAiAnalysisResult(null);
     try {
-      const matchedTech = (technicians || []).find((t: TechnicianProfile) => t.id === newDoc.technicianId);
+      const matchedTech = (technicians || []).find((t: TechnicianProfile) => String(t.id) === String(newDoc.technicianId));
       const res = await apiFetchJson(`${API_BASE}/ehs/ai-verify`, {
         method: "POST",
         body: {
@@ -66,47 +66,38 @@ export function useDocumentActions(
           type: newDoc.type,
           fileBase64: uploadedFileBase64,
           fileMimeType: uploadedFileMimeType,
-          technicianName: matchedTech ? matchedTech.name : ""
+          technicianName: matchedTech ? matchedTech.name : "",
+          technicianId: newDoc.technicianId,
+          fileName: newDoc.fileName,
+          documentTypeId: newDoc.documentTypeId,
         }
       });
       if (res.ok) {
         const data = (await safeJson(res)) as Record<string, unknown>;
         setAiAnalysisResult(data);
         
-        if (!newDoc.documentText && data.summary) {
-          setNewDoc((prev: Record<string, unknown>) => ({
-            ...prev,
-            documentText: `Summary:\n${data.summary}\n\nSafety Protocols:\n${(data.safetyProtocols as string[]).join("\n")}`
-          }));
-        }
+        const verified = data.verifiedByAi as boolean;
         
-        triggerBannerAlert("success", `Audit Checklist completed! Score: ${data.score}%`);
-        
-        const flaggedIssues = data.flaggedIssues as unknown[];
-        const hasIssues = flaggedIssues && flaggedIssues.length > 0;
-        const score = data.score as number;
-        const lowScore = score < 70;
-        
-        if (hasIssues || lowScore) {
-          triggerBannerAlert("warning", `Compliance issues detected (${flaggedIssues?.length || 0} issues, Score: ${score}%). Please review the audit results before manual submission.`);
+        if (!verified) {
+          triggerBannerAlert("warning", `AI verification failed: ${(data.failureReason as string) || "Document did not pass compliance checks."} Please review before manual submission.`);
+        } else if (data.documentInserted) {
+          triggerBannerAlert("success", `Document verified & registered! Expiry: ${data.expiryDate || "Not specified"}`);
+          // Document was already inserted by the AI verify endpoint
+          setShowUploadDoc(false);
+          setNewDoc({
+            fileName: "",
+            documentText: "",
+            type: "PPE Audit",
+            technicianId: "",
+            documentTypeId: "",
+            expiryDate: ""
+          });
+          setUploadedFileBase64(null);
+          setUploadedFileMimeType(null);
+          setAiAnalysisResult(null);
+          await refetchData(["documents", "notifications"]);
         } else {
-          const payload: Record<string, unknown> = {
-            ...newDoc,
-            score: data?.score || null,
-            issues: data?.flaggedIssues || [],
-            recommendations: data?.recommendations || "Verified safety compliance",
-            verifiedByAi: data?.verifiedByAi || false,
-            summary: data?.summary || null,
-            flaggedIssues: data?.flaggedIssues || null,
-            extractedData: data ? {
-              safetyProtocols: data.safetyProtocols,
-              environmentalImpacts: data.environmentalImpacts,
-              incidentReports: data.incidentReports
-            } : null,
-            userId: user?.id,
-            expiryDate: newDoc.expiryDate || null
-          };
-          await submitDocument(payload);
+          triggerBannerAlert("error", (data.documentInsertError as string) || "Document verification passed but registration failed.");
         }
       } else {
         triggerBannerAlert("error", "Gemini compliance auditor failed to parse raw text.");
@@ -115,37 +106,6 @@ export function useDocumentActions(
       triggerBannerAlert("error", "AI Server error occurred.");
     } finally {
       setAiAuditing(false);
-    }
-  };
-
-  const submitDocument = async (payload: Record<string, unknown>) => {
-    setActionLoading(true);
-    try {
-      const res = await apiFetchJson(`${API_BASE}/ehs/documents`, {
-        method: "POST",
-        body: payload
-      });
-
-      if (res.ok) {
-        setShowUploadDoc(false);
-        setNewDoc({
-          fileName: "",
-          documentText: "",
-          type: "PPE Audit",
-          technicianId: "",
-          documentTypeId: "",
-          expiryDate: ""
-        });
-        setUploadedFileBase64(null);
-        setUploadedFileMimeType(null);
-        setAiAnalysisResult(null);
-        triggerBannerAlert("success", "Document successfully submitted!");
-      } else {
-        triggerBannerAlert("error", "Failed to submit document.");
-      }      } catch {
-      triggerBannerAlert("error", "Error submitting document.");
-    } finally {
-      setActionLoading(false);
     }
   };
 
@@ -159,19 +119,11 @@ export function useDocumentActions(
     try {
       const payload: Record<string, unknown> = {
         ...newDoc,
-        score: (aiAnalysisResult?.score as number) || null,
-        issues: (aiAnalysisResult?.flaggedIssues as unknown[]) || [],
-        recommendations: aiAnalysisResult?.recommendations || "Verified safety compliance",
         verifiedByAi: (aiAnalysisResult?.verifiedByAi as boolean) || false,
-        summary: aiAnalysisResult?.summary || null,
-        flaggedIssues: aiAnalysisResult?.flaggedIssues || null,
-        extractedData: aiAnalysisResult ? {
-          safetyProtocols: aiAnalysisResult.safetyProtocols,
-          environmentalImpacts: aiAnalysisResult.environmentalImpacts,
-          incidentReports: aiAnalysisResult.incidentReports
-        } : null,
         userId: user?.id,
-        expiryDate: newDoc.expiryDate || null
+        expiryDate: aiAnalysisResult?.expiryDate || newDoc.expiryDate || null,
+        fileBase64: uploadedFileBase64,
+        fileMimeType: uploadedFileMimeType,
       };
 
       const userRole = user?.role;
@@ -182,12 +134,7 @@ export function useDocumentActions(
           return;
         }
         if (!aiAnalysisResult || !aiAnalysisResult.verifiedByAi) {
-          const flaggedIssues = (aiAnalysisResult?.flaggedIssues as string[]) || [];
-          const issues = flaggedIssues;
-          const issueText = issues.length > 0 
-            ? `Safety Issues: ${issues.join("; ")}`
-            : `Compliance score was only ${(aiAnalysisResult?.score as number) || 0}% (minimum 70% required).`;
-          triggerBannerAlert("error", `Cannot submit document that failed AI compliance verification. ${issueText}`);
+          triggerBannerAlert("error", "Cannot submit document that failed AI compliance verification.");
           setActionLoading(false);
           return;
         }
@@ -202,12 +149,10 @@ export function useDocumentActions(
         setShowUploadDoc(false);
         setNewDoc({
           technicianId: String(technicians[0]?.id || "t-1"),
-          projectId: "",
           type: "PPE Audit",
           documentTypeId: "",
           fileName: "",
           documentText: "",
-          previousVersionId: "",
           expiryDate: ""
         });
         setAiAnalysisResult(null);
@@ -242,7 +187,7 @@ export function useDocumentActions(
         const updated = await safeJson(res) as Record<string, unknown>;
         setViewingDoc(null);
         setApprovalComment("");
-        triggerBannerAlert("success", `HSE Certified Approval registered! New Status: ${updated?.status}`);
+        triggerBannerAlert("success", `HSE Certified Approval registered! New Status: ${updated ? getDocStatus(updated as { rejected: boolean; contractorApproverId: number | null; centralApproverId: number | null }) : "Unknown"}`);
         await refetchData(["documents"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;

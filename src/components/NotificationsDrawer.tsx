@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
 import { Notification, TechnicianDocument, Contractor } from "../types";
 import { Drawer } from "./Drawer";
+import { getDocStatus } from "../utils/helpers";
 
 interface NotificationsDrawerProps {
   show: boolean;
@@ -54,7 +55,7 @@ function ApprovalCard({
   doc: TechnicianDocument;
   onReview: (doc: TechnicianDocument) => void;
 }) {
-  const isContractor = doc.status === "Pending Contractor Approval";
+  const isContractor = getDocStatus(doc) === "Pending Contractor Approval";
   return (
     <div className="bg-white dark:bg-slate-900 border-2 border-slate-50 dark:border-slate-800 hover:border-[#E61C24]/20 rounded-[20px] p-4 shadow-sm hover:shadow-md dark:shadow-none transition-all group">
       <div className="space-y-3">

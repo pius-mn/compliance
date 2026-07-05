@@ -1,8 +1,10 @@
 import { Project, TechnicianDocument, TechnicianProfile, ComplianceFlag, User } from "../types";
 import { getAll, getById, getWhere, insert, update } from "../lib";
 import { runComplianceScan } from "./compliance_engine";
+import { getTechnicians } from "./technicians";
 import { emitSSE } from "../lib/sse";
 import { requireRole } from "../lib/permissions";
+import { enrichDocuments } from "./ehs";
 
 export async function getComplianceFlags(): Promise<ComplianceFlag[]> {
   return await getAll<ComplianceFlag>("complianceFlags");
@@ -43,18 +45,25 @@ async function notifyContractorSafetyLeads(contractorId: number | null, title: s
 export async function triggerManualScan(currentUser: User): Promise<ComplianceFlag[]> {
   requireRole(currentUser, ["Safaricom Admin", "Safaricom EHS Officer"], "Only Safaricom Admins or central EHS Officers can manually trigger compliance audits.");
 
-  const [projects, documents, technicians, users, existingFlags] = await Promise.all([
+  const [projects, documents, documentTypes, techs, users, existingFlags] = await Promise.all([
     getAll("projects"),
     getAll("documents"),
-    getAll("technicians"),
+    getAll("documentTypes"),
+    getTechnicians(),
     getAll("users"),
     getAll("complianceFlags"),
   ]);
 
+  const enrichedDocs = await enrichDocuments(
+    documents as unknown as TechnicianDocument[],
+    techs as unknown as Record<string, unknown>[],
+    documentTypes as unknown as Record<string, unknown>[],
+  );
+
   const { newFlags, updatedFlags } = runComplianceScan(
     projects as unknown as Project[],
-    documents as unknown as TechnicianDocument[],
-    technicians as unknown as TechnicianProfile[],
+    enrichedDocs,
+    techs as unknown as TechnicianProfile[],
     users as unknown as User[],
     existingFlags as unknown as ComplianceFlag[]
   );
@@ -68,7 +77,7 @@ export async function triggerManualScan(currentUser: User): Promise<ComplianceFl
       await insert("complianceFlags", f as unknown as Record<string, unknown>);
       
       if (f.severity === "High") {
-        const branchId = await getFlagBranchId(f, projects, documents, technicians);
+        const branchId = await getFlagBranchId(f, projects, documents, techs);
         await notifyContractorSafetyLeads(branchId, "🚨 High Severity Compliance Flag Generated", details);
       }
 

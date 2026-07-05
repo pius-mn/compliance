@@ -9,6 +9,7 @@ import { MilestoneForm } from "./MilestoneForm";
 import { MilestoneCard } from "./MilestoneCard";
 import { DailyActivities } from "./DailyActivities";
 import { SpecsSiteCrew } from "./SpecsSiteCrew";
+import { PhotoLightbox } from "./PhotoLightbox";
 
 export interface ProjectDetailsProps {
   project: Project | null;
@@ -31,9 +32,8 @@ export interface ProjectDetailsProps {
   setUpdatingStatus: (s: Milestone["status"] | null) => void;
   setStatusComments: (c: string) => void;
   handleUpdateMilestoneStatus: (id: number, status: Milestone["status"], comments?: string) => void;
-  handleUpdateMilestonePrerequisites: (id: number, cleared: string[]) => void;
-  handleUpdateMilestoneClearedDependencies?: (id: number, cleared: number[]) => void;
-  handleUpdateMilestoneDependencies?: (id: number, dependencies: number[]) => void;
+  handleUpdateMilestoneClearedDependencies?: (id: number, cleared: (number | string)[]) => void;
+  handleUpdateMilestoneDependencies?: (id: number, dependencies: (number | string)[]) => void;
   sitePhotos: SitePhoto[];
   deleteSitePhoto: (id: number) => void;
   projectPhotoInputRef?: React.RefObject<HTMLInputElement>;
@@ -80,7 +80,6 @@ function getStatusBadgeStyles(status: string) {
   return STATUS_BADGE_STYLES[status] || STATUS_BADGE_DEFAULT;
 }
 
-// ---- parses the (possibly JSON-encoded) photo description blob ----
 function parsePhotoDescription(rawDesc: unknown) {
   if (!rawDesc || typeof rawDesc !== "string") return { category: "General/Unassigned", milestoneId: "", text: "" };
   const trimmed = rawDesc.trim();
@@ -268,37 +267,6 @@ function ArtifactUploadModal({
   );
 }
 
-function PhotoLightbox({ photo, onClose }: { photo: SitePhoto; onClose: () => void }) {
-  const { category, text } = parsePhotoDescription(photo.description);
-  return (
-    <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xs z-[210] flex flex-col items-center justify-center p-4">
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 p-2 text-white/70 hover:text-white bg-white/10 hover:bg-white/20 rounded-full transition-all cursor-pointer"
-      >
-        <X className="w-5 h-5" />
-      </button>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={photo.photoData as string}
-        alt="Site Evidence Lightbox"
-        referrerPolicy="no-referrer"
-        className="max-w-full max-h-[80vh] rounded-lg shadow-2xl object-contain border border-white/10"
-      />
-      <div className="mt-4 text-center max-w-xl text-white space-y-1">
-        <p className="text-sm font-medium">{text || "Site evidence photo"}</p>
-        <div className="flex gap-4 justify-center items-center text-xs text-white/50">
-          <span>Folder: {category}</span>
-          <span>•</span>
-          <span>By {photo.uploadedByUserName}</span>
-          <span>•</span>
-          <span>{new Date(photo.uploadDate).toLocaleDateString()}</span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export const ProjectDetails: React.FC<ProjectDetailsProps> = ({
   project,
   onClose,
@@ -316,7 +284,6 @@ export const ProjectDetails: React.FC<ProjectDetailsProps> = ({
   predefinedPrerequisites,
   actionLoading,
   handleUpdateMilestoneStatus,
-  handleUpdateMilestonePrerequisites,
   handleUpdateMilestoneClearedDependencies,
   handleUpdateMilestoneDependencies,
   sitePhotos,
@@ -343,6 +310,11 @@ export const ProjectDetails: React.FC<ProjectDetailsProps> = ({
     setPrevProjectId(project?.id);
     setShowDeleteConfirm(false);
   }
+
+  const lightboxMeta = React.useMemo(() => {
+    if (!lightboxPhoto) return null;
+    return parsePhotoDescription(lightboxPhoto.description);
+  }, [lightboxPhoto]);
 
   // Upload modal state
   const [showArtifactModal, setShowArtifactModal] = React.useState<boolean>(false);
@@ -630,12 +602,12 @@ export const ProjectDetails: React.FC<ProjectDetailsProps> = ({
                     onToggleExpand={() => setExpandedMilestoneId(expandedMilestoneId === m.id ? null : m.id)}
                     isActiveGate={currentMilestone?.id === (m.id as number)}
                     canUpdateMilestones={canUpdateMilestones}
-                    handleUpdateMilestonePrerequisites={handleUpdateMilestonePrerequisites}
                     handleUpdateMilestoneClearedDependencies={handleUpdateMilestoneClearedDependencies}
                     handleUpdateMilestoneDependencies={handleUpdateMilestoneDependencies}
                     handleUpdateMilestoneStatus={handleUpdateMilestoneStatus}
                     allMilestones={allMilestones}
                     milestones={milestones}
+                    predefinedPrerequisites={predefinedPrerequisites}
                   />
                 ))
               )}
@@ -684,7 +656,18 @@ export const ProjectDetails: React.FC<ProjectDetailsProps> = ({
       )}
 
       {/* PHOTO LIGHTBOX DIALOG */}
-      {lightboxPhoto && <PhotoLightbox photo={lightboxPhoto} onClose={() => setLightboxPhoto(null)} />}
+      {lightboxPhoto && lightboxMeta && (
+        <PhotoLightbox src={lightboxPhoto.photoData as string} onClose={() => setLightboxPhoto(null)}>
+          <p className="text-sm font-medium">{lightboxMeta.text || "Site evidence photo"}</p>
+          <div className="flex gap-4 justify-center items-center text-xs text-white/50 mt-1">
+            <span>Folder: {lightboxMeta.category}</span>
+            <span>•</span>
+            <span>By {lightboxPhoto.uploadedByUserName}</span>
+            <span>•</span>
+            <span>{new Date(lightboxPhoto.uploadDate).toLocaleDateString()}</span>
+          </div>
+        </PhotoLightbox>
+      )}
 
       {/* Milestone Add Form Drawer Overlay */}
       <MilestoneForm
@@ -695,7 +678,6 @@ export const ProjectDetails: React.FC<ProjectDetailsProps> = ({
         handleCreateMilestone={handleCreateMilestone}
         actionLoading={actionLoading}
         predefinedMilestones={predefinedMilestones}
-        predefinedPrerequisites={predefinedPrerequisites}
         projectId={project.id}
         projectName={project.name}
         milestonesCount={milestones.length}

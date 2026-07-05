@@ -5,6 +5,9 @@
  * so the Authorization header is always injected — even on the very first
  * request before React state has hydrated from localStorage.
  *
+ * Automatically detects 401 (Unauthorized) responses and dispatches a custom
+ * `auth:expired` event on the window so the app can log out the user gracefully.
+ *
  * Usage:
  *   apiFetch('/api/v1/projects', { method: 'POST', body: JSON.stringify(data) })
  */
@@ -21,7 +24,16 @@ export function apiFetch(url: string, init: RequestInit = {}): Promise<Response>
     ...(init.headers as Record<string, string> | undefined),
   };
 
-  return fetch(url, { ...init, headers: mergedHeaders });
+  return fetch(url, { ...init, headers: mergedHeaders }).then(async (res) => {
+    // Detect expired / invalid tokens — 401 with "Unauthorized" body
+    if (res.status === 401 && typeof window !== "undefined") {
+      const body = await res.clone().json().catch(() => ({}));
+      if (body?.error === "Unauthorized") {
+        window.dispatchEvent(new CustomEvent("auth:expired"));
+      }
+    }
+    return res;
+  });
 }
 
 /**

@@ -1,7 +1,9 @@
 import React, { useState } from "react";
-import { Search, Shield, ChevronLeft, Check, X, AlertTriangle, History } from "lucide-react";
-import { Role, User, Contractor, TechnicianDocument, TechnicianProfile } from "../types";
+import { Search, Shield, ChevronLeft, Check, X, AlertTriangle, History, Eye, FileText as FileTextIcon, ZoomIn } from "lucide-react";
+import { Role, User, Contractor, DocumentType, TechnicianDocument, TechnicianProfile } from "../types";
 import { PaginationControls } from "../components/PaginationControls";
+import { PhotoLightbox } from "../components/PhotoLightbox";
+import { getDocStatus } from "../utils/helpers";
 
 export interface EhsViewProps {
   user: User | null;
@@ -45,12 +47,13 @@ export interface EhsViewProps {
   exportingCertDoc: TechnicianDocument | null;
   filteredBranches: Contractor[];
   actionLoading: boolean;
+  allDocumentTypes: DocumentType[];
 }
 
-// --- Shared status helpers (was duplicated once for the detail badge and
-// once for the table badge; now a single source of truth for both). ---
+// --- Shared status helpers ---
+// Document status is now computed from rejected/approverId fields.
 
-type DocStatus = TechnicianDocument["status"];
+type DocStatus = "Approved" | "Rejected" | "Pending Central Approval" | "Pending Contractor Approval";
 
 const STATUS_CLASSES: Record<"Approved" | "Rejected" | "default", string> = {
   Approved: "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400",
@@ -95,6 +98,12 @@ function MetaField({ label, value, valueClassName }: { label: string; value: Rea
   );
 }
 
+function getDocTypeName(docTypeId: number | null | undefined, allTypes: DocumentType[]): string {
+  if (docTypeId == null) return "";
+  const found = allTypes.find((t) => t.id === docTypeId);
+  return found?.name || "";
+}
+
 export default function EhsView(props: EhsViewProps) {
   const {
     user,
@@ -102,17 +111,24 @@ export default function EhsView(props: EhsViewProps) {
     filteredDocuments,
     docPage, setDocPage,
     itemsPerPage,
+    allDocumentTypes,
   } = props;
 
   const [selectedDocId, setSelectedDocId] = useState<number | string | null>(null);
+  const [lightboxDocImage, setLightboxDocImage] = useState<string | null>(null);
   const selectedDoc = (filteredDocuments || []).find(d => d.id === selectedDocId) || null;
 
   const isApprover = user && [Role.SafaricomAdmin, Role.SafaricomEHSOfficer, Role.ContractorEHSOfficer, Role.ContractorManager].some(r => r === user.role);
 
   if (selectedDoc) {
-    const scoreGood = (selectedDoc.complianceResult?.score ?? 0) >= 80;
-
     return (
+      <>
+      {lightboxDocImage && selectedDoc && (
+        <PhotoLightbox src={lightboxDocImage} onClose={() => setLightboxDocImage(null)}>
+          <p className="text-sm font-medium text-white/60">{selectedDoc.fileName}</p>
+          <p className="text-xs text-white/40">{selectedDoc.type} • {selectedDoc.technicianName}</p>
+        </PhotoLightbox>
+      )}
       <div className="fixed inset-0 z-[180] flex flex-col bg-[#F8FAFC] dark:bg-slate-950 overflow-y-auto panel-mobile-bottom">
         <div className="flex-1 min-h-0 bg-[#F8FAFC] dark:bg-slate-950 flex flex-col p-4 sm:p-8 overflow-y-auto">
           <div className="max-w-3xl w-full mx-auto space-y-6 sm:space-y-8 animate-in fade-in lg:animate-in lg:slide-in-from-bottom-4 lg:duration-500">
@@ -139,37 +155,83 @@ export default function EhsView(props: EhsViewProps) {
                     </h2>
                   </div>
                   <p className="text-sm font-medium text-slate-500 dark:text-slate-400 pl-12 sm:pl-12">
-                    {selectedDoc.type || "Document Audit"}
+                    {getDocTypeName(selectedDoc.documentTypeId, allDocumentTypes) || "Document Audit"}
                   </p>
                 </div>
                 <div className="pl-12 sm:pl-0">
-                  <StatusBadge status={selectedDoc.status} />
+                  <StatusBadge status={getDocStatus(selectedDoc)} />
                 </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:gap-6 p-5 sm:p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl sm:rounded-3xl border border-slate-100 dark:border-slate-800">
                 <MetaField label="Technician" value={selectedDoc.technicianName} />
                 <MetaField label="Upload Date" value={new Date(selectedDoc.uploadDate).toLocaleString()} />
-                <MetaField
-                  label="Compliance Score"
-                  value={`${selectedDoc.complianceResult?.score || 0}%`}
-                  valueClassName={`text-xl font-black ${scoreGood ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}
-                />
+                {/* Compliance Score field was removed from documents table */}
               </div>
 
-              {selectedDoc.summary && (
-                <div className="space-y-3">
-                  <label className="flex items-center gap-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                    <Search className="w-4 h-4" />
-                    AI Analysis Summary
-                  </label>
-                  <div className="p-5 sm:p-6 bg-slate-50 dark:bg-slate-800/50 rounded-2xl sm:rounded-3xl border border-slate-100 dark:border-slate-800 text-sm font-medium text-slate-700 dark:text-slate-300 leading-relaxed">
-                    {selectedDoc.summary}
-                  </div>
-                </div>
-              )}
+              {/* Document Preview — prefer filesystem path over base64 */}
+              {(() => {
+                const docFileSrc = selectedDoc.file_path
+                  ? `/api/v1/ehs/documents/${selectedDoc.id}/file`
+                  : selectedDoc.fileData || null;
+                if (!docFileSrc) return null;
 
-              {isApprover && selectedDoc.status.startsWith("Pending") && (
+                const isImage = selectedDoc.fileMimeType?.startsWith("image/") ||
+                  selectedDoc.fileName?.match(/\.(png|jpg|jpeg|gif|webp|svg)$/i);
+
+                return (
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest">
+                      <Eye className="w-4 h-4" />
+                      Document Preview
+                    </label>
+                    <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl sm:rounded-3xl border border-slate-100 dark:border-slate-800 overflow-hidden">
+                      {isImage ? (
+                        <div
+                          className="flex items-center justify-center p-4 relative group cursor-pointer"
+                          onClick={() => setLightboxDocImage(docFileSrc)}
+                        >
+                          {/* Zoom overlay on hover */}
+                          <div className="absolute inset-4 rounded-xl bg-slate-900/0 group-hover:bg-slate-900/40 transition-all duration-200 flex items-center justify-center z-10">
+                            <div className="p-2.5 bg-white/90 text-slate-800 rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-all duration-200 transform scale-75 group-hover:scale-100">
+                              <ZoomIn size={20} />
+                            </div>
+                          </div>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={docFileSrc}
+                            alt={selectedDoc.fileName}
+                            className="max-h-[400px] w-auto object-contain rounded-xl shadow-xs relative"
+                            referrerPolicy="no-referrer"
+                          />
+                        </div>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center p-8 text-center space-y-3">
+                          <div className="w-16 h-16 bg-rose-50 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 rounded-2xl flex items-center justify-center border border-rose-100 dark:border-rose-500/20">
+                            <FileTextIcon size={28} />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-slate-700 dark:text-slate-300">PDF Document</p>
+                            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{selectedDoc.fileName}</p>
+                          </div>
+                          <a
+                            href={docFileSrc}
+                            download={selectedDoc.fileName}
+                            className="inline-flex items-center gap-2 px-5 py-2.5 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-xl text-xs font-bold hover:bg-indigo-100 dark:hover:bg-indigo-500/20 transition-all border border-indigo-100 dark:border-indigo-500/20 cursor-pointer"
+                          >
+                            <Eye size={14} />
+                            Download & View PDF
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+
+
+              {isApprover && getDocStatus(selectedDoc).startsWith("Pending") && (
                 <div className="space-y-6 pt-6 sm:pt-8 border-t border-slate-100 dark:border-slate-800">
                   <div className="space-y-3">
                     <label className="block text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-widest">
@@ -208,6 +270,7 @@ export default function EhsView(props: EhsViewProps) {
           </div>
         </div>
       </div>
+      </>
     );
   }
 
@@ -253,9 +316,19 @@ export default function EhsView(props: EhsViewProps) {
                     <p className="text-sm font-bold text-slate-900 dark:text-slate-100 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors truncate">
                       {doc.fileName}
                     </p>
-                    <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                      {new Date(doc.uploadDate).toLocaleDateString()}
-                    </p>
+                    <div className="flex items-center gap-2 text-xs font-medium text-slate-500 dark:text-slate-400">
+                      <span>{new Date(doc.uploadDate).toLocaleDateString()}</span>
+                      {(() => {
+                        const typeName = getDocTypeName(doc.documentTypeId, allDocumentTypes);
+                        if (!typeName) return null;
+                        return (
+                          <>
+                            <span className="text-slate-300 dark:text-slate-600">·</span>
+                            <span className="text-indigo-500 dark:text-indigo-400">{typeName}</span>
+                          </>
+                        );
+                      })()}
+                    </div>
                   </div>
                 </div>
 
@@ -268,7 +341,7 @@ export default function EhsView(props: EhsViewProps) {
 
                 <div className="flex items-center justify-between sm:justify-start sm:flex-1">
                   <span className="text-xs font-medium text-slate-500 dark:text-slate-400 sm:hidden">{doc.technicianName}</span>
-                  <StatusBadge status={doc.status} size="sm" />
+                  <StatusBadge status={getDocStatus(doc)} size="sm" />
                 </div>
               </li>
             ))}

@@ -1,4 +1,6 @@
 import { runComplianceScan } from "../services/compliance_engine";
+import { enrichDocuments } from "../services/ehs";
+import { getTechnicians } from "../services/technicians";
 import { getAll, insert, update } from "./database";
 import { emitSSE } from "./sse";
 import { Role, ComplianceFlag, Project, TechnicianDocument, TechnicianProfile, User } from "../types";
@@ -93,15 +95,24 @@ export async function startComplianceScanner() {
   scannerStarted = true;
 
   try {
-    const [projects, documents, technicians, users, existingFlags] = await Promise.all([
+    const [projects, documents, documentTypes, techs, users, existingFlags] = await Promise.all([
       getAll<Project>("projects"),
       getAll<TechnicianDocument>("documents"),
-      getAll<TechnicianProfile>("technicians"),
+      getAll<Record<string, unknown>>("documentTypes"),
+      getTechnicians(),
       getAll<User>("users"),
       getAll<ComplianceFlag>("complianceFlags"),
     ]);
 
-    const { newFlags, updatedFlags } = runComplianceScan(projects, documents, technicians, users, existingFlags);
+    const enrichedDocs = await enrichDocuments(
+      documents,
+      techs as Record<string, unknown>[],
+      documentTypes as Record<string, unknown>[],
+    );
+
+    const technicians = techs as unknown as TechnicianProfile[];
+
+    const { newFlags, updatedFlags } = runComplianceScan(projects, enrichedDocs, technicians, users, existingFlags);
 
     const updated = await applyScanResults(newFlags, updatedFlags, true);
     
@@ -114,15 +125,24 @@ export async function startComplianceScanner() {
 
   setInterval(async () => {
     try {
-      const [projects, documents, technicians, users, existingFlags] = await Promise.all([
+      const [projects, documents, documentTypes, techs, users, existingFlags] = await Promise.all([
         getAll<Project>("projects"),
         getAll<TechnicianDocument>("documents"),
-        getAll<TechnicianProfile>("technicians"),
+        getAll<Record<string, unknown>>("documentTypes"),
+        getTechnicians(),
         getAll<User>("users"),
         getAll<ComplianceFlag>("complianceFlags"),
       ]);
 
-      const { newFlags, updatedFlags } = runComplianceScan(projects, documents, technicians, users, existingFlags);
+      const intervalEnriched = await enrichDocuments(
+        documents,
+        techs as Record<string, unknown>[],
+        documentTypes as Record<string, unknown>[],
+      );
+
+      const technicians = techs as unknown as TechnicianProfile[];
+
+      const { newFlags, updatedFlags } = runComplianceScan(projects, intervalEnriched, technicians, users, existingFlags);
 
       const updated = await applyScanResults(newFlags, updatedFlags, false);
       if (updated) {

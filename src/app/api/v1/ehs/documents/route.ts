@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getEHSDocuments, uploadEHSDocument } from "@/src/services/ehs";
 import { requireAuth } from "@/src/lib/routeAuth";
+import { getDocStatus } from "@/src/utils/helpers";
 
 export async function GET(req: Request) {
   const auth = await requireAuth(req);
@@ -21,7 +22,7 @@ export async function GET(req: Request) {
 
     // Filter by status if provided
     if (statusFilter) {
-      list = list.filter(d => d.status.startsWith(statusFilter));
+      list = list.filter(d => getDocStatus(d).startsWith(statusFilter));
     }
 
     // Sort by upload date descending (newest first) if requested

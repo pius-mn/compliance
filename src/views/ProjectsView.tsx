@@ -45,9 +45,8 @@ export interface ProjectsViewProps {
   setUpdatingStatus: React.Dispatch<React.SetStateAction<Milestone["status"] | null>>;
   setStatusComments: React.Dispatch<React.SetStateAction<string>>;
   handleUpdateMilestoneStatus: (id: number, status: Milestone["status"], comments?: string) => void;
-  handleUpdateMilestonePrerequisites: (id: number, cleared: string[]) => void;
-  handleUpdateMilestoneClearedDependencies?: (id: number, cleared: number[]) => void;
-  handleUpdateMilestoneDependencies?: (id: number, dependencies: number[]) => Promise<void>;
+  handleUpdateMilestoneClearedDependencies?: (id: number, cleared: (number | string)[]) => void;
+  handleUpdateMilestoneDependencies?: (id: number, dependencies: (number | string)[]) => Promise<void>;
   technicians: TechnicianProfile[];
   API_BASE: string;
   setProjects: React.Dispatch<React.SetStateAction<Project[]>>;

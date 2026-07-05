@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { getTechnicians } from "../../../../services/technicians";
 import { isTechnicianInUserHub } from "../../../../lib/permissions";
 import { requireAuth } from "../../../../lib/routeAuth";
-import { getAll } from "../../../../lib";
 
 export async function GET(req: Request) {
   const auth = await requireAuth(req);
@@ -11,13 +10,15 @@ export async function GET(req: Request) {
 
   let list = await getTechnicians();
   if (!user.isCentral) {
-    list = [];
-    const allTechs = await getAll<Record<string, unknown>>("technicians");
-    for (const t of allTechs) {
+    // Filter the enriched list (with overallEhsScore) by user's contractor scope
+    // instead of re-fetching raw DB records which lack the computed score
+    const filtered: Record<string, unknown>[] = [];
+    for (const t of list) {
       if (await isTechnicianInUserHub(t, user)) {
-        list.push(t);
+        filtered.push(t);
       }
     }
+    list = filtered;
   }
 
   const url = new URL(req.url);

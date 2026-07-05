@@ -11,14 +11,11 @@ const ai = new GoogleGenAI({
 });
 
 export interface EHSAnalysisResult {
-  score: number;
-  summary: string;
-  safetyProtocols: string[];
-  environmentalImpacts: string[];
-  incidentReports: string[];
-  flaggedIssues: string[];
-  recommendations: string;
   verifiedByAi: boolean;
+  /** Extracted expiry date in YYYY-MM-DD format, or null if not found / not applicable */
+  expiryDate: string | null;
+  /** Human-readable reason explaining why verification failed, or null if passed */
+  failureReason: string | null;
 }
 
 export async function processEHSDocument(
@@ -35,16 +32,12 @@ CRITICAL INSTRUCTIONS:
 - Verify technician name: "${technicianName || 'Not Provided'}". Mismatch = CRITICAL FAILURE.
 - Verify document type: "${documentType}".
 - Check Expiry Date. Expired = CRITICAL FAILURE.
-- Rate compliance out of 100. If name mismatch or expired, score MUST be 0 and verifiedByAi MUST be false.
+- Rate compliance out of 100. If name mismatch or expired, verifiedByAi MUST be false.
+- Extract the expiry date from the document and return it in YYYY-MM-DD format. If no expiry date is found, return null.
 
-Tasks:
-1. Summarize concisely (include name, type, expiry).
-2. Extract compliance data.
-3. Flag issues (mismatches/expiry heavily flagged).
-4. Rate compliance (0-100).
-5. Provide actionable recommendations.
+Adhere to standard Kenyan EHS and Safaricom HSE protocols.
 
-Adhere to standard Kenyan EHS and Safaricom HSE protocols.`;
+Return verifiedByAi (boolean), expiryDate (string or null), and failureReason (string — explain why verification failed, or null if passed).`;
 
   const contents: (string | { text: string } | { inlineData: { mimeType: string; data: string } })[] = [];
   
@@ -69,16 +62,11 @@ Adhere to standard Kenyan EHS and Safaricom HSE protocols.`;
           responseMimeType: "application/json",
           responseSchema: {
             type: Type.OBJECT,
-            required: ["score", "summary", "safetyProtocols", "environmentalImpacts", "incidentReports", "flaggedIssues", "recommendations", "verifiedByAi"],
+            required: ["verifiedByAi"],
             properties: {
-              score: { type: Type.INTEGER },
-              summary: { type: Type.STRING },
-              safetyProtocols: { type: Type.ARRAY, items: { type: Type.STRING } },
-              environmentalImpacts: { type: Type.ARRAY, items: { type: Type.STRING } },
-              incidentReports: { type: Type.ARRAY, items: { type: Type.STRING } },
-              flaggedIssues: { type: Type.ARRAY, items: { type: Type.STRING } },
-              recommendations: { type: Type.STRING },
-              verifiedByAi: { type: Type.BOOLEAN }
+              verifiedByAi: { type: Type.BOOLEAN },
+              expiryDate: { type: Type.STRING },
+              failureReason: { type: Type.STRING }
             }
           }
         }
@@ -87,15 +75,17 @@ Adhere to standard Kenyan EHS and Safaricom HSE protocols.`;
       if (!response?.text) throw new Error("Empty response from Gemini API");
       
       const parsed = JSON.parse(response.text);
+      
+      // Validate expiryDate — must be YYYY-MM-DD or null
+      let expiryDate: string | null = parsed.expiryDate || null;
+      if (expiryDate && !/^\d{4}-\d{2}-\d{2}$/.test(expiryDate)) {
+        expiryDate = null;
+      }
+      
       return {
-        score: Number(parsed.score) || 0,
-        summary: parsed.summary || "",
-        safetyProtocols: parsed.safetyProtocols || [],
-        environmentalImpacts: parsed.environmentalImpacts || [],
-        incidentReports: parsed.incidentReports || [],
-        flaggedIssues: parsed.flaggedIssues || [],
-        recommendations: parsed.recommendations || "",
-        verifiedByAi: Boolean(parsed.verifiedByAi)
+        verifiedByAi: Boolean(parsed.verifiedByAi),
+        expiryDate,
+        failureReason: parsed.failureReason || null
       };
       
     } catch (error) {
@@ -109,14 +99,9 @@ Adhere to standard Kenyan EHS and Safaricom HSE protocols.`;
       console.error(`[EHS AI Processor] Failure on attempt ${attempt}:`, error);
       
       return {
-        score: 0,
-        summary: "AI processing failed due to a system error.",
-        safetyProtocols: [],
-        environmentalImpacts: [],
-        incidentReports: [],
-        flaggedIssues: [`System Error: Document verification failed.`],
-        recommendations: "Manual EHS review required.",
-        verifiedByAi: false
+        verifiedByAi: false,
+        expiryDate: null,
+        failureReason: "AI processor encountered an error during analysis."
       };
     }
   }

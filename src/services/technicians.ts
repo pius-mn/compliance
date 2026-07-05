@@ -1,10 +1,32 @@
 import { User } from "../types";
-import { getAll, getById, insert, update, remove } from "../lib";
+import { getAll, getById, insert, update, remove, query } from "../lib";
 import { recalculateTechnicianScore } from "./ehs";
 import { isTechnicianInUserHub } from "../lib/permissions";
+import { computeTechnicianEhsScore, buildApprovedDocLookup } from "../utils/helpers";
 
 export async function getTechnicians(): Promise<Record<string, unknown>[]> {
-  return await getAll<Record<string, unknown>>("technicians");
+  const [techs, workRoles, approvedDocRows] = await Promise.all([
+    getAll<Record<string, unknown>>("technicians"),
+    getAll<Record<string, unknown>>("workRoles"),
+    // Only fetch approved docs with the minimal columns needed for score computation
+    query(
+      "SELECT technicianId, documentTypeId, rejected, contractorApproverId, centralApproverId, expiryDate FROM documents WHERE rejected = FALSE AND contractorApproverId IS NOT NULL AND centralApproverId IS NOT NULL"
+    ),
+  ]);
+
+  const approvedDocLookup = buildApprovedDocLookup(
+    approvedDocRows as { technicianId: number; documentTypeId: number | null; rejected: boolean; contractorApproverId: number | null; centralApproverId: number | null; expiryDate: string | null }[],
+  );
+
+  return techs.map((t) => ({
+    ...t,
+    overallEhsScore: computeTechnicianEhsScore(
+      t.id as number,
+      t.workRoleIds as number[] | undefined,
+      workRoles as { id: number; documentTypeIds: number[] }[],
+      approvedDocLookup,
+    ),
+  }));
 }
 
 export async function updateTechnicianRoles(

@@ -9,7 +9,6 @@ interface MilestoneFormProps {
   handleCreateMilestone: (e: React.FormEvent) => void;
   actionLoading: boolean;
   predefinedMilestones: string[];
-  predefinedPrerequisites: string[];
   projectId: number;
   projectName: string;
   milestonesCount: number;

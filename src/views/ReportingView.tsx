@@ -28,7 +28,7 @@ import {
   User,
   ComplianceFlag
 } from "../types";
-import { safeNumber, safeString } from "../utils/helpers";
+import { safeNumber, safeString, getDocStatus } from "../utils/helpers";
 import { 
   ResponsiveContainer, 
   BarChart, 
@@ -262,8 +262,8 @@ const ReportingView: React.FC<ReportingViewProps> = ({
     return (documents || []).filter(d => {
       if (!isCentral && d.contractorId !== currentUser?.contractorId) return false;
       if (activeContractorId !== "all" && String(d.contractorId) !== String(activeContractorId)) return false;
-      if (selectedProjectId !== "all" && String(d.projectId) !== String(selectedProjectId)) return false;
-      if (selectedStatus !== "all" && d.status !== selectedStatus) return false;
+      // projectId removed from documents table
+      if (selectedStatus !== "all" && getDocStatus(d) !== selectedStatus) return false;
       return true;
     });
   }, [documents, activeContractorId, selectedProjectId, selectedStatus, isCentral, currentUser]);
@@ -369,7 +369,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
   // Memoized expiring and expired documents report query
   const expiringDocsReport = useMemo(() => {
-    const refDate = new Date("2026-06-14T00:00:00");
+    const refDate = new Date();
     const thresholdDays = parseInt(expirationDays) || 0;
 
     const matched = (documents || []).filter((doc) => {
@@ -387,10 +387,10 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
     return matched
       .map((doc) => {
-        const safeDateStr = (v: unknown) => {
-          return safeString(v);
-        };
-        const expiry = new Date(safeDateStr(doc.expiryDate) + "T00:00:00");
+        // expiryDate comes from MySQL DATE → JS Date → JSON, producing an ISO
+        // string like "2026-06-13T21:00:00.000Z".  Plain Date.parse works fine
+        // on both that and on a bare "YYYY-MM-DD" string.
+        const expiry = new Date(doc.expiryDate as string);
         const diffTime = expiry.getTime() - refDate.getTime();
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
         return {
@@ -414,17 +414,13 @@ const ReportingView: React.FC<ReportingViewProps> = ({
     const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
 
     // 2. Audit approval rate
-    const approvedCount = (filteredDocs || []).filter(d => d.status === "Approved").length;
+    const approvedCount = (filteredDocs || []).filter(d => getDocStatus(d) === "Approved").length;
     const totalDocs = (filteredDocs || []).length;
     const approvalRate = totalDocs ? Math.round((approvedCount / totalDocs) * 100) : 0;
 
     // 3. Highlighted Safety Flags
-    const totalFlagsArr = (filteredDocs || []).reduce<string[]>((acc, d) => {          if (d.flaggedIssues && d.flaggedIssues.length) {
-        acc.push(...d.flaggedIssues);
-      }
-      return acc;
-    }, []);
-    const issueCount = totalFlagsArr.length;
+    // Flagged issues field was removed from documents table
+    const issueCount = 0;
 
     // 4. Contractor Performance League
     const partnerStats = (contractors || []).map(b => {
@@ -479,7 +475,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
     const colors = ["#18863A", "#F59E0B", "#3B82F6", "#E61C24"];
     
     return statuses.map((status, idx) => {
-      const count = (filteredDocs || []).filter(d => d.status === status).length;
+      const count = (filteredDocs || []).filter(d => getDocStatus(d) === status).length;
       return {
         name: status,
         value: count,
@@ -1501,7 +1497,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 <span className="px-2 py-0.5 text-[9px] font-extrabold bg-[#E61C24]/10 text-[#E61C24] rounded border border-[#E61C24]/20 uppercase tracking-widest font-mono">
                   Predictive SLA Watch
                 </span>
-                <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">Reference Date: June 14, 2026</span>
+                <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">Reference Date: {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</span>
               </div>
               <h3 className="font-extrabold text-sm text-slate-900 dark:text-slate-100 uppercase flex items-center gap-1.5">
                 <Clock className="w-5 h-5 text-[#E61C24]" /> Document Expiration Forecasting Report

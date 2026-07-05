@@ -1,18 +1,35 @@
 import { TechnicianDocument, User } from "../types";
 import { getAll, getById, getWhere, insert, update } from "../lib";
 import { isTechnicianInUserHub } from "../lib/permissions";
+import { saveDocumentFile, moveToFinalPath, deleteDocumentFile } from "./documentStorage";
 
 export function getTechnicianContractorId(tech: Record<string, unknown>): number | null {
   return (tech.contractorId as number | null) || null;
+}
+
+/** Enrich documents with resolved technicianName and type from lookup tables. */
+export async function enrichDocuments(
+  docs: TechnicianDocument[],
+  technicians: Record<string, unknown>[],
+  documentTypes: Record<string, unknown>[]
+): Promise<TechnicianDocument[]> {
+  return docs.map((d) => {
+    const tech = technicians.find((t) => (t.id as number) === d.technicianId);
+    const dt = documentTypes.find((t) => (t.id as number) === d.documentTypeId);
+    return {
+      ...d,
+      technicianName: (tech?.name as string) || "Unknown",
+      type: (dt?.name as string) || "Unknown",
+    };
+  });
 }
 
 export async function recalculateTechnicianScore(technicianId: number, persist: boolean = false): Promise<void> {
   const tech = await getById<Record<string, unknown>>("technicians", technicianId);
   if (!tech) return;
 
-  const [workRoles, documentTypes, documents] = await Promise.all([
+  const [workRoles, documents] = await Promise.all([
     getAll<Record<string, unknown>>("workRoles"),
-    getAll<Record<string, unknown>>("documentTypes"),
     getAll<Record<string, unknown>>("documents"),
   ]);
 
@@ -20,7 +37,6 @@ export async function recalculateTechnicianScore(technicianId: number, persist: 
 
   const techWorkRoleIds = tech.workRoleIds as number[] | undefined;
   if (techWorkRoleIds && techWorkRoleIds.length > 0) {
-    // Collect all unique document type IDs required by the technician's work roles
     const requiredDocTypeIds = new Set<number>();
     for (const roleId of techWorkRoleIds!) {
       const role = workRoles.find((r) => r.id === roleId);
@@ -30,38 +46,31 @@ export async function recalculateTechnicianScore(technicianId: number, persist: 
     }
 
     if (requiredDocTypeIds.size > 0) {
-      // Count how many required document types have been approved for this technician
       let approvedCount = 0;
       for (const reqDocId of requiredDocTypeIds) {
-        const dtName = documentTypes.find((dt) => (dt.id as number) === reqDocId)?.name;
         const hasApprovedDoc = documents.some((d) =>
           (d.technicianId as number) === (tech.id as number) &&
-          d.status === "Approved" &&
-          ((d.documentTypeId as number) === reqDocId || (dtName && d.type === dtName))
+          (d.rejected as boolean) === false &&
+          (d.contractorApproverId as number) !== null &&
+          (d.centralApproverId as number) !== null &&
+          (d.documentTypeId as number) === reqDocId &&
+          (!d.expiryDate || new Date(d.expiryDate as string).getTime() >= Date.now())
         );
         if (hasApprovedDoc) {
           approvedCount++;
         }
       }
-
-      // Score = approved documents / total required documents × 100
       score = Math.round((approvedCount / requiredDocTypeIds.size) * 100);
     } else {
-      // Has work roles but no document types required — no requirements to meet
       score = 100;
     }
   }
-  // If no work roles assigned, score stays 0
 
   score = Math.max(0, Math.min(100, score));
-
   const newStatus = score < 70 ? "EHS Check Needed" : "Active";
 
   if (persist) {
-    await update("technicians", technicianId, {
-      overallEhsScore: score,
-      status: newStatus
-    });
+    await update("technicians", technicianId, { status: newStatus });
   }
 }
 
@@ -84,7 +93,12 @@ async function notifyContractorSafetyLeads(contractorId: number | null, title: s
 }
 
 export async function getEHSDocuments(): Promise<TechnicianDocument[]> {
-  return await getAll<TechnicianDocument>("documents");
+  const [docs, technicians, documentTypes] = await Promise.all([
+    getAll<TechnicianDocument>("documents"),
+    getAll<Record<string, unknown>>("technicians"),
+    getAll<Record<string, unknown>>("documentTypes"),
+  ]);
+  return enrichDocuments(docs, technicians, documentTypes);
 }
 
 async function dbTechnicianIdCheck(id: number): Promise<number> {
@@ -96,48 +110,38 @@ async function dbTechnicianIdCheck(id: number): Promise<number> {
 }
 
 export async function uploadEHSDocument(
-  payload: Partial<TechnicianDocument> & { score?: number; issues?: string[]; recommendations?: string; verifiedByAi?: boolean },
+  payload: Partial<TechnicianDocument> & { score?: number; issues?: string[]; recommendations?: string; verifiedByAi?: boolean; fileBase64?: string; fileMimeType?: string },
   currentUser: User
 ): Promise<TechnicianDocument> {
   const {
     technicianId,
-    type,
     fileName,
-    projectId,
     score,
     issues,
-    recommendations,
     verifiedByAi,
-    summary,
-    extractedData,
-    flaggedIssues,
-    previousVersionId,
     documentTypeId,
-    expiryDate
+    expiryDate,
+    fileBase64,
   } = payload;
 
-  if (!technicianId || !type || !fileName) {
-    throw new Error("Missing technicianId, type or fileName");
+  if (!technicianId || !fileName) {
+    throw new Error("Missing technicianId or fileName");
   }
+
+  // Normalize documentTypeId to a number — the frontend may send it as a string
+  const docTypeRaw = documentTypeId as (number | string | null | undefined);
+  const rawNumeric = docTypeRaw != null && docTypeRaw !== "" ? Number(docTypeRaw) : null;
+  const numericDocTypeId = rawNumeric != null && !isNaN(rawNumeric) ? rawNumeric : null;
+
+  // Resolve document type name for display/audit purposes
+  const documentTypes = await getAll<Record<string, unknown>>("documentTypes");
+  const docTypeName = documentTypes.find((dt: Record<string, unknown>) => (dt.id as number) === numericDocTypeId)?.name as string || "Document";
 
   // Find technician
   const targetTechId = await dbTechnicianIdCheck(technicianId);
   const tech = await getById<Record<string, unknown>>("technicians", targetTechId);
   if (!tech) {
     throw new Error("Technician profile not found");
-  }
-
-  // Prevention check: active/pending duplicate certificates
-  const existingDocs = await getWhere("documents",
-    "technicianId = ? AND (documentTypeId = ? OR type = ?) AND (status = ? OR status = ? OR status = ?)",
-    [(tech.id as number), documentTypeId || 0, type || "", "Approved", "Pending Contractor Approval", "Pending Central Approval"]
-  );
-  
-  const existingCert = existingDocs.find((d) => 
-    (documentTypeId ? (d as Record<string, unknown>).documentTypeId === documentTypeId : (d as Record<string, unknown>).type === type)
-  );
-  if (existingCert) {
-    throw new Error(`A valid document for ${type} is already active or awaiting approval.`);
   }
 
   // Safety check on technician ownership - Contractor isolation
@@ -147,7 +151,7 @@ export async function uploadEHSDocument(
 
   // Security check - AI verification
   if (verifiedByAi === false) {
-    const issuesList = (flaggedIssues && flaggedIssues.length > 0) ? flaggedIssues : (issues && issues.length > 0 ? issues : []);
+    const issuesList = issues && issues.length > 0 ? issues : [];
     const reasonText = issuesList.length > 0 
       ? `Reason: AI Audit detected safety non-compliances: ${issuesList.join("; ")}`
       : `Reason: EHS compliance score is only ${score || 0}%, which is below the required 70% threshold.`;
@@ -156,56 +160,91 @@ export async function uploadEHSDocument(
 
   const contractorId = getTechnicianContractorId(tech) || currentUser.contractorId || 0;
 
-  const newDocId = await insert("documents", {
-    technicianId: tech.id as number,
-    technicianName: tech.name as string,
-    contractorId: contractorId || 0,
-    projectId: projectId || null,
-    type: type || "",
-    documentTypeId: documentTypeId || null,
-    fileName: fileName || "",
-    uploadDate: new Date().toISOString().split("T")[0],
-    status: "Pending Contractor Approval",
-    contractorApproverId: null,
-    centralApproverId: null,
-    approvalChainComments: [],
-    complianceResult: score !== undefined && score !== null ? {
-      score: Number(score) || 80,
-      issues: issues || [],
-      recommendations: recommendations || "Regular EHS checking recommended.",
-      verifiedByAi: !!verifiedByAi
-    } : null,
-    summary: summary || null,
-    extractedData: extractedData || null,
-    flaggedIssues: flaggedIssues || null,
-    previousVersionId: previousVersionId || null,
-    expiryDate: expiryDate || null
+  // Check for existing active/pending document of the same type (using numeric comparison)
+  const existingDocs = await getWhere("documents",
+    "technicianId = ? AND documentTypeId = ? AND rejected = FALSE",
+    [(tech.id as number), numericDocTypeId || 0]
+  );
+  
+  const existingCert = existingDocs.find((d) => {
+    const doc = d as Record<string, unknown>;
+    // Use numeric comparison to avoid string-vs-number type mismatch
+    if (Number(doc.documentTypeId) !== numericDocTypeId) return false;
+    // Skip expired documents
+    if (doc.expiryDate && new Date(doc.expiryDate as string).getTime() < Date.now()) return false;
+    return true;
   });
 
+  let docId: number;
+  let isUpdate = false;
+  let tempFilePath: string | null = null;
+
+  // Save file to temp location first (before we know the docId for new docs)
+  if (fileBase64) {
+    tempFilePath = saveDocumentFile(fileBase64, fileName || "document");
+  }
+
+  if (existingCert) {
+    // Overwrite existing document: update fields and reset approval workflow
+    const existing = existingCert as Record<string, unknown>;
+    docId = existing.id as number;
+    isUpdate = true;
+
+    // Delete old file from disk if present
+    const existingFilePath = existing.file_path as string | null;
+    if (existingFilePath) {
+      deleteDocumentFile(existingFilePath);
+    }
+
+    // Save file to final path if we have base64 data
+    let filePath: string | null = null;
+    if (tempFilePath && fileName) {
+      filePath = moveToFinalPath(tempFilePath, docId, fileName);
+    }
+
+    await update("documents", docId, {
+      fileName: fileName || "",
+      uploadDate: new Date().toISOString().split("T")[0],
+      rejected: false,
+      contractorApproverId: null,
+      centralApproverId: null,
+      expiryDate: expiryDate || null,
+      file_path: filePath,
+    });
+  } else {
+    // No existing document — create new
+    docId = await insert("documents", {
+      technicianId: tech.id as number,
+      contractorId: contractorId || 0,
+      documentTypeId: numericDocTypeId,
+      fileName: fileName || "",
+      uploadDate: new Date().toISOString().split("T")[0],
+      rejected: false,
+      contractorApproverId: null,
+      centralApproverId: null,
+      expiryDate: expiryDate || null,
+      file_path: null,
+    });
+
+    // Move temp file to final path now that we have the docId
+    if (tempFilePath && fileName) {
+      const filePath = moveToFinalPath(tempFilePath, docId, fileName);
+      await update("documents", docId, { file_path: filePath });
+    }
+  }
+
   const newDoc: TechnicianDocument = {
-    id: newDocId,
+    id: docId,
     technicianId: tech.id as number,
     technicianName: tech.name as string,
+    type: docTypeName,
     contractorId: contractorId || 0,
-    projectId: projectId || null,
-    type: type || "",
-    documentTypeId: documentTypeId || null,
+    documentTypeId: numericDocTypeId,
     fileName: fileName || "",
     uploadDate: new Date().toISOString().split("T")[0],
-    status: "Pending Contractor Approval",
+    rejected: false,
     contractorApproverId: null,
     centralApproverId: null,
-    approvalChainComments: [],
-    complianceResult: score !== undefined && score !== null ? {
-      score: Number(score) || 80,
-      issues: issues || [],
-      recommendations: recommendations || "Regular EHS checking recommended.",
-      verifiedByAi: !!verifiedByAi
-    } : null,
-    summary: summary || null,
-    extractedData: extractedData || null,
-    flaggedIssues: flaggedIssues || null,
-    previousVersionId: previousVersionId || null,
     expiryDate: expiryDate || null
   };
 
@@ -217,13 +256,18 @@ export async function uploadEHSDocument(
     await recalculateTechnicianScore(tech.id as number, true);
   }
 
+  const auditAction = isUpdate ? "EHS Document Updated" : "EHS Document Uploaded";
+  const auditDetails = isUpdate
+    ? `Technician "${tech.name as string}" updated EHS document: "${docTypeName}" (${fileName}) — previous approval reset, pending re-approval`
+    : `Technician "${tech.name as string}" uploaded EHS document: "${docTypeName}" (${fileName})`;
+
   await insert("auditLogs", {
     userId: currentUser.id,
     userName: currentUser.name,
     userRole: currentUser.role,
-    action: "EHS Document Uploaded",
+    action: auditAction,
     category: "EHS Compliance",
-    details: `Technician "${tech.name as string}" uploaded EHS document: "${type}" (${fileName})`,
+    details: auditDetails,
     timestamp: new Date().toISOString(),
     contractorId: contractorId || 0
   });
@@ -250,20 +294,9 @@ export async function approveEHSDocument(
     throw new Error("Permission denied for this document.");
   }
 
-  // Security check - AI verification
-  const complianceResult = d.complianceResult as Record<string, unknown> | null;
-  if (complianceResult && (complianceResult.verifiedByAi as boolean) === false) {
-    throw new Error("Cannot approve a document that failed AI compliance verification.");
-  }
-
-  const approvalChainComments = (d.approvalChainComments as string[]) || [];
-  const formattedComment = `${u.role as string}: ${comment || "Approved without comments."}`;
-  const updatedComments = [...approvalChainComments, formattedComment];
-  
   let auditAction = "";
   let auditDetails = "";
 
-  let newStatus: string;
   let newContractorApproverId: number | null = d.contractorApproverId as number | null;
   let newCentralApproverId: number | null = d.centralApproverId as number | null;
 
@@ -271,20 +304,17 @@ export async function approveEHSDocument(
   const uId = u.id as number;
   const uName = u.name as string;
   const dId = d.id as number;
-  const dType = d.type as string;
   const dTechId = d.technicianId as number;
   const dContractorId = d.contractorId as number | null;
 
   if (uRole === "Contractor Safety Lead" || uRole === "Contractor Manager") {
-    newStatus = "Pending Central Approval";
     newContractorApproverId = uId;
     auditAction = "EHS Contractor Approval given";
-    auditDetails = `Contractor approved document ID: ${dId} (${dType}) - comments input: ${comment || 'N/A'}`;
+    auditDetails = `Contractor approved document ID: ${dId} - comments input: ${comment || 'N/A'}`;
   } else if (uRole === "Safaricom EHS Officer" || uRole === "Safaricom Admin") {
-    newStatus = "Approved";
     newCentralApproverId = uId;
     auditAction = "EHS Central Approval given";
-    auditDetails = `Central finalized approval for document ID: ${dId} (${dType})`;
+    auditDetails = `Central finalized approval for document ID: ${dId}`;
 
     // Recalculate technician safety score
     const tech = await getById<Record<string, unknown>>("technicians", dTechId);
@@ -300,10 +330,8 @@ export async function approveEHSDocument(
   }
 
   await update("documents", docId, {
-    status: newStatus,
     contractorApproverId: newContractorApproverId,
-    centralApproverId: newCentralApproverId,
-    approvalChainComments: updatedComments
+    centralApproverId: newCentralApproverId
   });
 
   await insert("auditLogs", {
@@ -339,17 +367,17 @@ export async function rejectEHSDocument(
   const d = docObj as Record<string, unknown>;
   const u = user as Record<string, unknown>;
 
+  // Resolve document type name from documentTypes table
+  const documentTypes = await getAll<Record<string, unknown>>("documentTypes");
+  const docTypeName = documentTypes.find((dt: Record<string, unknown>) => (dt.id as number) === (d.documentTypeId as number))?.name as string || "Document";
+
   // Security check - contractor isolation
   if (!(u.isCentral as boolean) && (d.contractorId as number | null) !== (u.contractorId as number | null)) {
     throw new Error("Permission denied for this document.");
   }
 
-  const approvalChainComments = (d.approvalChainComments as string[]) || [];
-  const updatedComments = [...approvalChainComments, `${u.role as string} REJECTION: ${comment}`];
-
   await update("documents", docId, {
-    status: "Rejected",
-    approvalChainComments: updatedComments
+    rejected: true
   });
 
   // Recalculate technician safety score (gets lowered as approved is gone)
@@ -361,7 +389,7 @@ export async function rejectEHSDocument(
   await notifyContractorSafetyLeads(
     d.contractorId as number | null,
     "🚨 Document Rejected: " + (d.fileName as string),
-    `The document "${d.fileName as string}" (Type: ${d.type as string}) has been rejected. Comment: ${comment}`
+    `The document "${d.fileName as string}" (Type: ${docTypeName}) has been rejected. Comment: ${comment}`
   );
 
   await insert("auditLogs", {
@@ -370,7 +398,7 @@ export async function rejectEHSDocument(
     userRole: u.role as string,
     action: "EHS Document Rejected",
     category: "EHS Compliance",
-    details: `Rejected EHS Doc ID ${d.id as number} (${d.type as string}) - Audit reason: ${comment}`,
+    details: `Rejected EHS Doc ID ${d.id as number} (${docTypeName}) - Audit reason: ${comment}`,
     timestamp: new Date().toISOString(),
     contractorId: d.contractorId as number | null
   });

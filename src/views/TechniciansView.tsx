@@ -10,6 +10,10 @@ import {
   Activity,
   ShieldAlert,
   SlidersHorizontal,
+  Eye,
+  Edit,
+  Trash2,
+  AlertTriangle,
   LucideIcon,
 } from "lucide-react";
 import { PaginationControls } from "../components/PaginationControls";
@@ -141,6 +145,8 @@ export const TechniciansView: React.FC<TechniciansViewProps> = ({
 
   const [selectedTechnician, setSelectedTechnician] = useState<TechnicianProfile | null>(null);
   const [showAddTech, setShowAddTech] = useState(false);
+  const [editTechnician, setEditTechnician] = useState<TechnicianProfile | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | string | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("All");
   const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 10;
@@ -171,6 +177,9 @@ export const TechniciansView: React.FC<TechniciansViewProps> = ({
   const canAddTechnician = user?.role === Role.SafaricomAdmin ||
                          user?.role === Role.ContractorManager ||
                          user?.role === Role.ContractorEHSOfficer;
+
+  const canManageTechnician = user?.role === Role.ContractorManager ||
+                             user?.role === Role.ContractorEHSOfficer;
 
   // Compute dashboard metrics
   const stats = React.useMemo(() => {
@@ -341,6 +350,32 @@ export const TechniciansView: React.FC<TechniciansViewProps> = ({
                     )}
                   </div>
                 </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 mt-2">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setSelectedTechnician(tech); }}
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 active:scale-95 transition-all cursor-pointer"
+                  >
+                    <Eye size={13} /> View
+                  </button>
+                  {canManageTechnician && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setEditTechnician(tech); }}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-[#18863A] dark:text-emerald-400 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-500/10 active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Edit size={13} /> Edit
+                    </button>
+                  )}
+                  {canManageTechnician && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(tech.id); }}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-rose-600 dark:text-rose-400 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-500/10 active:scale-95 transition-all cursor-pointer"
+                    >
+                      <Trash2 size={13} /> Delete
+                    </button>
+                  )}
+                </div>
               </li>
             );
           })}
@@ -363,8 +398,8 @@ export const TechniciansView: React.FC<TechniciansViewProps> = ({
 
       {/* ADD TECHNICIAN MODAL OVERLAY */}
       {showAddTech && canAddTechnician && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[180] flex items-center justify-center p-4 overflow-y-auto modal-mobile-bottom">
-          <div className="w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-300">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[180] flex items-center justify-center p-4 overflow-y-auto modal-mobile-bottom" onClick={() => setShowAddTech(false)}>
+          <div className="w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-300" onClick={(e) => e.stopPropagation()}>
             <AddTechnicianForm
               onAdd={async (tech) => {
                 await onAddTechnician(tech);
@@ -376,6 +411,72 @@ export const TechniciansView: React.FC<TechniciansViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* EDIT TECHNICIAN MODAL OVERLAY */}
+      {editTechnician && canManageTechnician && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[180] flex items-center justify-center p-4 overflow-y-auto modal-mobile-bottom" onClick={() => setEditTechnician(null)}>
+          <div className="w-full max-w-lg shadow-2xl animate-in zoom-in-95 duration-300" onClick={(e) => e.stopPropagation()}>
+            <AddTechnicianForm
+              editId={editTechnician.id}
+              initialData={{
+                name: editTechnician.name,
+                phone: editTechnician.phone,
+                specialization: editTechnician.specialization,
+              }}
+              onUpdate={async (_, tech) => {
+                await onUpdateTechnician(editTechnician.id, tech);
+                setEditTechnician(null);
+              }}
+              onClose={() => setEditTechnician(null)}
+              actionLoading={actionLoading}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      {deleteConfirmId !== null && canManageTechnician && (() => {
+        const techToDelete = paginatedTechnicians.find(t => t.id === deleteConfirmId);
+        return (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs z-[200] flex items-center justify-center p-4" onClick={() => setDeleteConfirmId(null)}>
+            <div className="w-full max-w-sm bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-slate-700 p-6 animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
+              <div className="flex flex-col items-center text-center">
+                <div className="w-14 h-14 bg-rose-50 dark:bg-rose-500/10 rounded-2xl flex items-center justify-center text-rose-600 dark:text-rose-400 border border-rose-100 dark:border-rose-500/20 mb-4">
+                  <AlertTriangle size={28} />
+                </div>
+                <h3 className="text-lg font-black text-slate-900 dark:text-slate-100 tracking-tight">Delete Technician</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                  Are you sure you want to delete <span className="font-bold text-slate-700 dark:text-slate-300">{techToDelete?.name || "this technician"}</span>?
+                </p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+                  This action cannot be undone. The technician and all associated user data will be permanently removed.
+                </p>
+              </div>
+              <div className="flex items-center gap-3 mt-6">
+                <button
+                  onClick={() => setDeleteConfirmId(null)}
+                  disabled={actionLoading}
+                  className="flex-1 py-3 px-4 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-sm font-bold transition-all active:scale-95 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    if (deleteConfirmId !== null) {
+                      await onDeleteTechnician(deleteConfirmId);
+                      setDeleteConfirmId(null);
+                    }
+                  }}
+                  disabled={actionLoading}
+                  className="flex-1 py-3 px-4 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-sm font-bold transition-all active:scale-95 cursor-pointer disabled:opacity-50 shadow-lg shadow-rose-600/10 flex items-center justify-center gap-2"
+                >
+                  {actionLoading ? "Deleting..." : <><Trash2 size={15} /> Delete</>}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* TECHNICIAN DETAILS OVERLAY DRAWER SHEET */}
       {selectedTechnician && (
@@ -390,8 +491,6 @@ export const TechniciansView: React.FC<TechniciansViewProps> = ({
               allRoles={allRoles}
               allDocumentTypes={allDocumentTypes}
               onUpdateRoles={onUpdateTechnicianRoles}
-              onUpdateTechnician={onUpdateTechnician}
-              onDeleteTechnician={onDeleteTechnician}
             />
           </div>
         </div>

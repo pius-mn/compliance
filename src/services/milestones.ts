@@ -67,12 +67,7 @@ export async function createProjectMilestone(
     throw new Error(`Milestones must be added sequentially. Next expected: "${expectedTitle}"`);
   }
 
-  // Auto-chain sequential dependency if none is specified
-  let computedDependencies: number[] = milestoneData.dependencies || [];
-  if (computedDependencies.length === 0 && existingProjectMilestones.length > 0) {
-    const lastMilestone = existingProjectMilestones[existingProjectMilestones.length - 1];
-    computedDependencies = [lastMilestone.id];
-  }
+  const computedDependencies: (number | string)[] = milestoneData.dependencies || [];
 
   const id = await insert("milestones", {
     projectId,
@@ -80,12 +75,8 @@ export async function createProjectMilestone(
     description: milestoneData.description || "",
     status: "Pending",
     dueDate: milestoneData.dueDate || new Date().toISOString().split("T")[0],
-    weight: Number(milestoneData.weight) || 10,
     dependencies: computedDependencies,
-    prerequisites: milestoneData.prerequisites || [],
-    clearedPrerequisites: [],
     clearedDependencies: [],
-    prerequisiteNotes: milestoneData.prerequisiteNotes || "",
     completedAt: null
   });
 
@@ -96,12 +87,8 @@ export async function createProjectMilestone(
     description: milestoneData.description || "",
     status: "Pending",
     dueDate: milestoneData.dueDate || new Date().toISOString().split("T")[0],
-    weight: Number(milestoneData.weight) || 10,
     dependencies: computedDependencies,
-    prerequisites: milestoneData.prerequisites || [],
-    clearedPrerequisites: [],
     clearedDependencies: [],
-    prerequisiteNotes: milestoneData.prerequisiteNotes || "",
     completedAt: null
   };
 
@@ -144,14 +131,13 @@ export async function updateMilestone(
     throw new Error("Cannot perform operations on this milestone. It is locked because a subsequent milestone has been added.");
   }
 
-  const { status, prerequisites, clearedPrerequisites, clearedDependencies, statusComments, dependencies } = updates;
+  const { status, clearedDependencies, statusComments, dependencies } = updates;
 
   // Build partial update for fields being changed
   const fieldsToUpdate: Record<string, unknown> = {};
 
   if (dependencies !== undefined) fieldsToUpdate.dependencies = dependencies;
-  if (prerequisites !== undefined) fieldsToUpdate.prerequisites = prerequisites;
-  if (clearedPrerequisites !== undefined) fieldsToUpdate.clearedPrerequisites = clearedPrerequisites;
+
   if (clearedDependencies !== undefined) fieldsToUpdate.clearedDependencies = clearedDependencies;
   if (statusComments !== undefined) fieldsToUpdate.statusComments = statusComments;
 
@@ -184,20 +170,14 @@ export async function updateMilestone(
     // Check custom/constraint dependencies
     if (m.dependencies && m.dependencies.length > 0) {
       const otherMilestoneIds = projectMilestones.map(x => x.id);
-      const constraints = m.dependencies.filter(d => !otherMilestoneIds.includes(d));
+      const constraints = m.dependencies.filter(d => !otherMilestoneIds.includes(d as number));
       const unclearedConstraints = constraints.filter(c => !(m.clearedDependencies || []).includes(c));
       if (unclearedConstraints.length > 0) {
         throw new Error(`Cannot complete milestone. Blocking dependencies must be cleared first: ${unclearedConstraints.join(", ")}`);
       }
     }
 
-    // Check prerequisites
-    if (m.prerequisites && m.prerequisites.length > 0) {
-      const uncleared = m.prerequisites.filter(p => !(m.clearedPrerequisites || []).includes(p));
-      if (uncleared.length > 0) {
-        throw new Error(`Cannot complete milestone. Blocking prerequisites must be cleared first: ${uncleared.join(", ")}`);
-      }
-    }
+
   }
 
   const oldStatus = m.status;

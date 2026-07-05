@@ -5,6 +5,7 @@ import { getEHSDocuments } from "@/src/services/ehs";
 import { getTechnicians } from "@/src/services/technicians";
 import { getMilestones } from "@/src/services/milestones";
 import { getComplianceFlags } from "@/src/services/compliance";
+import { getDocStatus } from "@/src/utils/helpers";
 import { requireAuth } from "@/src/lib/routeAuth";
 import { getAll } from "@/src/lib";
 import { isSafaricomRole, isContractorRole } from "@/src/lib/permissions";
@@ -109,10 +110,10 @@ export async function GET(req: Request) {
 
     const documentStats = {
       total: filteredDocs.length,
-      approved: filteredDocs.filter((d) => d.status === "Approved").length,
-      pendingBranch: filteredDocs.filter((d) => d.status === "Pending Contractor Approval").length,
-      pendingCentral: filteredDocs.filter((d) => d.status === "Pending Central Approval").length,
-      rejected: filteredDocs.filter((d) => d.status === "Rejected").length,
+      approved: filteredDocs.filter((d) => getDocStatus(d) === "Approved").length,
+      pendingBranch: filteredDocs.filter((d) => getDocStatus(d) === "Pending Contractor Approval").length,
+      pendingCentral: filteredDocs.filter((d) => getDocStatus(d) === "Pending Central Approval").length,
+      rejected: filteredDocs.filter((d) => getDocStatus(d) === "Rejected").length,
     };
 
     const technicianStats = {

@@ -138,10 +138,7 @@ export function useProjectActions(
           title: "",
           description: "",
           dueDate: new Date().toISOString().split("T")[0],
-          weight: "20",
           dependencies: [],
-          prerequisites: [],
-          prerequisiteNotes: ""
         });
         triggerBannerAlert("success", "New safety milestone added!");
         refetchData(["milestones"]);
@@ -195,35 +192,7 @@ export function useProjectActions(
     }
   };
 
-  const handleUpdateMilestonePrerequisites = async (milestoneId: number | string, clearedPrerequisites: string[]) => {
-    setActionLoading(true);
-    try {
-      const milestone = milestones.find((m: Milestone) => m.id === milestoneId);
-      if (!milestone) throw new Error("Milestone not found");
-
-      const res = await apiFetchJson(`${API_BASE}/milestones/${milestoneId}`, {
-        method: "PUT",
-        body: { status: milestone.status, clearedPrerequisites, userId: user?.id }
-      });
-
-      if (res.ok) {
-        triggerBannerAlert("success", "Prerequisites updated!");
-        if (selectedProjectId) await fetchMilestones(selectedProjectId);
-        refetchData(["milestones"]);
-      } else {
-        const errorText = await res.text();
-        let err: Record<string, unknown>;
-        try { err = JSON.parse(errorText); } catch { err = { error: "Failed, check console" }; }
-        triggerBannerAlert("error", (err?.error as string) || "Failed to update prerequisites");
-      }
-    } catch {
-      triggerBannerAlert("error", "Failed to update prerequisites");
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  const handleUpdateMilestoneClearedDependencies = async (milestoneId: number | string, clearedDependencies: string[]) => {
+  const handleUpdateMilestoneClearedDependencies = async (milestoneId: number | string, clearedDependencies: (number | string)[]) => {
     setActionLoading(true);
     try {
       const milestone = milestones.find((m: Milestone) => m.id === milestoneId);
@@ -484,7 +453,6 @@ export function useProjectActions(
     handleCreateMilestone,
     deleteSitePhoto,
     handleUpdateMilestoneStatus,
-    handleUpdateMilestonePrerequisites,
     handleUpdateMilestoneClearedDependencies,
     handleUpdateMilestoneDependencies,
     uploadSitePhoto,

@@ -33,7 +33,7 @@ export default function ProjectsPage() {
   return (
     <ProjectsView
       {...viewProps}
-      triggerBannerAlert={(type: string, msg: string) => appState.setSysAlert({ type, message: msg })}
+      triggerBannerAlert={appState.triggerBannerAlert}
       projectSearch={appState.projectSearch}
       setProjectSearch={appState.setProjectSearch}
       projectPage={projectPage}

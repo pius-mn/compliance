@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { TechnicianProfile, TechnicianDocument, WorkRole, DocumentType, User, Role } from "../types";
+import { TechnicianProfile, TechnicianDocument, WorkRole, DocumentType, User } from "../types";
+import { getDocStatus } from "../utils/helpers";
 import { 
   X, 
   Upload, 
@@ -17,8 +18,7 @@ import {
   ChevronDown,
   ChevronUp,
   ShieldAlert,
-  Edit,
-  Trash2
+  Eye
 } from "lucide-react";
 
 interface TechnicianDetailsProps {
@@ -30,12 +30,9 @@ interface TechnicianDetailsProps {
   allRoles: WorkRole[];
   allDocumentTypes: DocumentType[];
   onUpdateRoles: (technicianId: number | string, workRoleIds: (number | string)[]) => Promise<void>;
-  onUpdateTechnician?: (id: number | string, tech: { name: string; phone: string; specialization: string; email?: string }) => Promise<void>;
-  onDeleteTechnician?: (id: number | string) => Promise<void>;
 }
 
 export const TechnicianDetails: React.FC<TechnicianDetailsProps> = ({
-  user,
   technician,
   documents,
   onClose,
@@ -43,8 +40,6 @@ export const TechnicianDetails: React.FC<TechnicianDetailsProps> = ({
   allRoles,
   allDocumentTypes,
   onUpdateRoles,
-  onUpdateTechnician,
-  onDeleteTechnician,
 }) => {
   // Client-side current time to avoid SSR hydration mismatches from new Date()
   const [currentTime] = useState(() => Date.now());
@@ -53,39 +48,7 @@ export const TechnicianDetails: React.FC<TechnicianDetailsProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [expandedDocId, setExpandedDocId] = useState<number | string | null>(null);
-  const [isEditMode, setIsEditMode] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [editForm, setEditForm] = useState({
-    name: technician.name,
-    phone: technician.phone,
-    specialization: technician.specialization,
-  });
   const techDocs = (documents || []).filter(doc => doc.technicianId === technician.id);
-  const isTechnician = user?.role === Role.Technician;
-
-  const handleUpdateTechnician = async () => {
-    if (onUpdateTechnician) {
-      setIsSaving(true);
-      try {
-        await onUpdateTechnician(technician.id, editForm);
-        setIsEditMode(false);
-      } finally {
-        setIsSaving(false);
-      }
-    }
-  };
-
-  const handleDeleteTechnician = async () => {
-    if (onDeleteTechnician) {
-      setIsSaving(true);
-      try {
-        await onDeleteTechnician(technician.id);
-        onClose();
-      } finally {
-        setIsSaving(false);
-      }
-    }
-  };
 
   const handleSaveRoles = async () => {
     setIsSaving(true);
@@ -108,16 +71,8 @@ export const TechnicianDetails: React.FC<TechnicianDetailsProps> = ({
   
   const requiredDocumentTypes = (allDocumentTypes || []).filter(doc => requiredDocumentTypeIds.includes(doc.id));
 
-  // Compute stats for required compliance
-  const uploadedRequiredDocs = requiredDocumentTypes.filter(docType => {
-    const existingDoc = techDocs.find(d => d.type === docType.name || d.documentTypeId === docType.id);
-    const isExpired = existingDoc?.expiryDate && currentTime > 0 && new Date(existingDoc.expiryDate).getTime() < currentTime;
-    return existingDoc && !isExpired;
-  });
-
-  const percentComplete = requiredDocumentTypes.length > 0 
-    ? Math.round((uploadedRequiredDocs.length / requiredDocumentTypes.length) * 100) 
-    : 100;
+  // Score is computed server-side and passed via the API
+  const percentComplete = technician.overallEhsScore;
 
   // Score styling
   const getScoreColor = (score: number) => {
@@ -130,6 +85,27 @@ export const TechnicianDetails: React.FC<TechnicianDetailsProps> = ({
     if (score >= 90) return "bg-emerald-500";
     if (score >= 75) return "bg-amber-500";
     return "bg-rose-500";
+  };
+
+  const getDocTypeName = (docTypeId: number | null | undefined): string => {
+    if (docTypeId == null) return "";
+    const found = allDocumentTypes.find((t) => t.id === docTypeId);
+    return found?.name || "";
+  };
+
+  const getApprovalStatusBadge = (status: string) => {
+    switch (status) {
+      case "Approved":
+        return { bg: "bg-emerald-50 text-emerald-700 border-emerald-200", icon: CheckCircle2, label: "Approved" };
+      case "Pending Central Approval":
+        return { bg: "bg-blue-50 text-blue-700 border-blue-200", icon: Upload, label: "Pending Central" };
+      case "Pending Contractor Approval":
+        return { bg: "bg-amber-50 text-amber-700 border-amber-200", icon: Upload, label: "Pending Contractor" };
+      case "Rejected":
+        return { bg: "bg-rose-50 text-rose-700 border-rose-200", icon: ShieldAlert, label: "Rejected" };
+      default:
+        return { bg: "bg-slate-50 text-slate-600 border-slate-200", icon: FileText, label: status };
+    }
   };
 
   return (
@@ -159,91 +135,22 @@ export const TechnicianDetails: React.FC<TechnicianDetailsProps> = ({
               </span>
             </div>
             
-            {isEditMode ? (
-              <div className="mt-2 space-y-2">
-                <input 
-                  type="text" 
-                  value={editForm.name} 
-                  onChange={(e) => setEditForm({...editForm, name: e.target.value})} 
-                  className="w-full text-lg font-black text-slate-900 px-2 py-1 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#18863A]/20 focus:border-[#18863A] outline-hidden" 
-                  placeholder="Technician Name"
-                />
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    value={editForm.specialization} 
-                    onChange={(e) => setEditForm({...editForm, specialization: e.target.value})} 
-                    className="flex-1 text-xs px-2 py-1 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#18863A]/20 focus:border-[#18863A] outline-hidden" 
-                    placeholder="Specialization"
-                  />
-                  <input 
-                    type="text" 
-                    value={editForm.phone} 
-                    onChange={(e) => setEditForm({...editForm, phone: e.target.value})} 
-                    className="flex-1 text-xs px-2 py-1 bg-white border border-slate-200 rounded-lg focus:ring-2 focus:ring-[#18863A]/20 focus:border-[#18863A] outline-hidden" 
-                    placeholder="Phone"
-                  />
-                </div>
-                <div className="flex gap-2 mt-2">
-                  <button onClick={handleUpdateTechnician} disabled={isSaving} className="px-3 py-1 bg-[#18863A] text-white rounded-lg text-xs font-bold hover:bg-[#156e2f] transition-all disabled:opacity-50">
-                    {isSaving ? "Saving..." : "Save"}
-                  </button>
-                  <button onClick={() => setIsEditMode(false)} disabled={isSaving} className="px-3 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold hover:bg-slate-200 transition-all">
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <h2 className="text-xl font-black text-slate-900 tracking-tight mt-1">{technician.name}</h2>
-                <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
-                  <span className="flex items-center gap-1">
-                    <Briefcase size={12} className="text-slate-400" />
-                    {technician.specialization}
-                  </span>
-                  <span>•</span>
-                  <span className="flex items-center gap-1">
-                    <Phone size={12} className="text-slate-400" />
-                    {technician.phone}
-                  </span>
-                </div>
-              </>
-            )}
+            <h2 className="text-xl font-black text-slate-900 tracking-tight mt-1">{technician.name}</h2>
+            <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
+              <span className="flex items-center gap-1">
+                <Briefcase size={12} className="text-slate-400" />
+                {technician.specialization}
+              </span>
+              <span>•</span>
+              <span className="flex items-center gap-1">
+                <Phone size={12} className="text-slate-400" />
+                {technician.phone}
+              </span>
+            </div>
           </div>
         </div>
         
         <div className="flex items-center gap-2">
-          {!isEditMode && !isTechnician && (
-            <>
-              {showDeleteConfirm ? (
-                <div className="flex items-center gap-2 bg-rose-50 p-1 rounded-xl border border-rose-100">
-                  <button onClick={handleDeleteTechnician} disabled={isSaving} className="px-3 py-1.5 bg-rose-600 text-white rounded-lg text-xs font-bold hover:bg-rose-700 transition-all whitespace-nowrap">
-                    {isSaving ? "Wait..." : "Confirm Delete"}
-                  </button>
-                  <button onClick={() => setShowDeleteConfirm(false)} disabled={isSaving} className="p-1.5 text-slate-500 hover:bg-slate-200 rounded-lg transition-all">
-                    <X size={14} />
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <button 
-                    onClick={() => setIsEditMode(true)} 
-                    className="p-2 hover:bg-slate-100 active:bg-slate-200 text-slate-400 hover:text-[#18863A] rounded-full transition-all border border-slate-100 bg-white"
-                    title="Edit Details"
-                  >
-                    <Edit size={16} />
-                  </button>
-                  <button 
-                    onClick={() => setShowDeleteConfirm(true)} 
-                    className="p-2 hover:bg-rose-50 active:bg-rose-100 text-slate-400 hover:text-rose-600 rounded-full transition-all border border-slate-100 bg-white"
-                    title="Delete Technician"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </>
-              )}
-            </>
-          )}
           <div className="h-6 w-px bg-slate-200 mx-1"></div>
           <button 
             onClick={onClose} 
@@ -366,9 +273,8 @@ export const TechnicianDetails: React.FC<TechnicianDetailsProps> = ({
                 <div className="flex items-center gap-1.5">
                   <TrendingUp size={14} className="text-[#18863A]" />
                   <span className="text-xs font-bold text-slate-700">Safety Compliance Standing</span>
-                </div>
-                <span className={`text-xs font-black ${percentComplete === 100 ? 'text-[#18863A]' : 'text-amber-600'}`}>
-                  {uploadedRequiredDocs.length} of {requiredDocumentTypes.length} Active ({percentComplete}%)
+                </div>                  <span className={`text-xs font-black ${percentComplete === 100 ? 'text-[#18863A]' : 'text-amber-600'}`}>
+                  {percentComplete}%
                 </span>
               </div>
               <div className="h-2.5 w-full bg-slate-200/60 rounded-full overflow-hidden">
@@ -434,19 +340,32 @@ export const TechnicianDetails: React.FC<TechnicianDetailsProps> = ({
                   </div>
                   
                   <div className="flex items-center justify-between pt-3 border-t border-slate-100/80 mt-2">
-                    {existingDoc ? (
-                      <div className={`text-[9px] font-black px-2 py-0.5 rounded border ${
-                        isExpired 
-                          ? 'bg-rose-100/40 text-rose-700 border-rose-100' 
-                          : 'bg-emerald-100/40 text-[#18863A] border-emerald-100/50'
-                      }`}>
-                        {existingDoc.expiryDate ? (isExpired ? `Expired: ${new Date(existingDoc.expiryDate).toLocaleDateString()}` : `Expires: ${new Date(existingDoc.expiryDate).toLocaleDateString()}`) : 'No Expiry'}
-                      </div>
-                    ) : (
-                      <div className="text-[9px] font-black px-2 py-0.5 rounded bg-amber-100/40 text-amber-700 border border-amber-150/40">
-                        Required
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {existingDoc ? (
+                        <>
+                          <div className={`text-[9px] font-black px-2 py-0.5 rounded border ${
+                            isExpired 
+                              ? 'bg-rose-100/40 text-rose-700 border-rose-100' 
+                              : 'bg-emerald-100/40 text-[#18863A] border-emerald-100/50'
+                          }`}>
+                            {existingDoc.expiryDate ? (isExpired ? `Expired: ${new Date(existingDoc.expiryDate).toLocaleDateString()}` : `Expires: ${new Date(existingDoc.expiryDate).toLocaleDateString()}`) : 'No Expiry'}
+                          </div>                            {(() => {
+                            const st = getApprovalStatusBadge(getDocStatus(existingDoc));
+                            const Icon = st.icon;
+                            return (
+                              <div className={`text-[9px] font-black px-2 py-0.5 rounded-full border inline-flex items-center gap-1 ${st.bg}`}>
+                                <Icon size={10} />
+                                {st.label}
+                              </div>
+                            );
+                          })()}
+                        </>
+                      ) : (
+                        <div className="text-[9px] font-black px-2 py-0.5 rounded bg-amber-100/40 text-amber-700 border border-amber-150/40">
+                          Required
+                        </div>
+                      )}
+                    </div>
                     
                     <button 
                       onClick={() => onUpload(technician.id, docType.name)}
@@ -479,78 +398,47 @@ export const TechnicianDetails: React.FC<TechnicianDetailsProps> = ({
 
                   {existingDoc && expandedDocId === existingDoc.id && (
                     <div className="mt-3 pt-3 border-t border-slate-100 space-y-3 animate-in fade-in duration-200">
-                      {/* Safety Score */}
-                      <div className="flex items-center justify-between bg-slate-50/50 p-2.5 rounded-xl border border-slate-150/60">
-                        <span className="text-[10px] font-black uppercase text-slate-400">EHS Safety Index:</span>
-                        <span className={`text-[10px] font-black px-2 py-0.5 rounded border ${
-                          existingDoc.complianceResult?.score !== undefined && existingDoc.complianceResult.score >= 80
-                            ? "bg-emerald-50 text-emerald-700 border-emerald-150"
-                            : existingDoc.complianceResult?.score !== undefined && existingDoc.complianceResult.score >= 60
-                              ? "bg-amber-50 text-amber-700 border-amber-150"
-                              : "bg-rose-50 text-rose-700 border-rose-150"
-                        }`}>
-                          {existingDoc.complianceResult?.score !== undefined ? `${existingDoc.complianceResult.score}%` : "0%"}
-                        </span>
-                      </div>
+                      {/* File Preview — prefer filesystem path over base64 */}
+                      {(() => {
+                        const docFileSrc = existingDoc.file_path
+                          ? `/api/v1/ehs/documents/${existingDoc.id}/file`
+                          : existingDoc.fileData || null;
+                        if (!docFileSrc) return null;
 
-                      {/* Summary */}
-                      {existingDoc.summary && (
-                        <div className="space-y-1">
-                          <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">AI Audit Summary</span>
-                          <p className="text-[11px] text-slate-600 font-medium leading-relaxed bg-slate-50/40 p-2.5 rounded-xl border border-slate-150/50">
-                            {existingDoc.summary}
-                          </p>
-                        </div>
-                      )}
+                        const isImage = existingDoc.fileMimeType?.startsWith("image/") ||
+                          existingDoc.fileName?.match(/\.(png|jpg|jpeg|gif|webp|svg)$/i);
 
-                      {/* Failures & Flagged Issues */}
-                      <div className="space-y-1.5">
-                        <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">Flagged Compliance Exceptions</span>
-                        {existingDoc.flaggedIssues && existingDoc.flaggedIssues.length > 0 ? (
-                          <div className="space-y-1.5">
-                            {existingDoc.flaggedIssues.map((issue, idx) => (
-                              <div key={idx} className="flex items-start gap-2 p-2.5 bg-rose-50/50 border border-rose-100 rounded-xl text-[11px] text-rose-800 leading-relaxed font-semibold">
-                                <ShieldAlert size={12} className="text-rose-500 shrink-0 mt-0.5" />
-                                <span>{issue}</span>
+                        return (
+                          <div className="bg-slate-50/50 rounded-xl border border-slate-150/60 overflow-hidden">
+                            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-100/80">
+                              <Eye size={12} className="text-slate-400" />
+                              <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Document Preview</span>
+                            </div>
+                            {isImage ? (
+                              <div className="flex items-center justify-center p-3">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={docFileSrc}
+                                  alt={existingDoc.fileName}
+                                  className="max-h-48 w-auto object-contain rounded-lg shadow-xs"
+                                  referrerPolicy="no-referrer"
+                                />
                               </div>
-                            ))}
-                          </div>
-                        ) : existingDoc.complianceResult?.issues && existingDoc.complianceResult.issues.length > 0 ? (
-                          <div className="space-y-1.5">
-                            {existingDoc.complianceResult.issues.map((issue, idx) => (
-                              <div key={idx} className="flex items-start gap-2 p-2.5 bg-rose-50/50 border border-rose-100 rounded-xl text-[11px] text-rose-800 leading-relaxed font-semibold">
-                                <ShieldAlert size={12} className="text-rose-500 shrink-0 mt-0.5" />
-                                <span>{issue}</span>
+                            ) : (
+                              <div className="flex items-center justify-center gap-3 p-4">
+                                <a
+                                  href={docFileSrc}
+                                  download={existingDoc.fileName}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-bold hover:bg-indigo-100 transition-all border border-indigo-100 cursor-pointer"
+                                >
+                                  <Eye size={12} />
+                                  Download PDF
+                                </a>
                               </div>
-                            ))}
+                            )}
                           </div>
-                        ) : (
-                          <p className="text-[11px] text-emerald-800 font-semibold bg-emerald-50/25 p-2.5 rounded-xl border border-emerald-100/50 leading-relaxed flex items-center gap-1.5">
-                            <CheckCircle2 size={12} className="text-[#18863A]" />
-                            No compliance issues flagged. This document is certified.
-                          </p>
-                        )}
-                      </div>
-
-                      {/* Corrective Actions Recommendations */}
-                      {existingDoc.complianceResult?.recommendations && (
-                        <div className="space-y-1">
-                          <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">Corrective Action Recommendations</span>
-                          <p className="text-[11px] text-amber-800 font-semibold bg-amber-50/20 p-2.5 rounded-xl border border-amber-100/50 leading-relaxed">
-                            {existingDoc.complianceResult.recommendations}
-                          </p>
-                        </div>
-                      )}
-
-                      {/* Approval comments */}
-                      {existingDoc.approvalChainComments && existingDoc.approvalChainComments.length > 0 && (
-                        <div className="space-y-1">
-                          <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">Auditor Review Comments</span>
-                          <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-150/70 font-semibold leading-relaxed">
-                            {existingDoc.approvalChainComments.join(" | ")}
-                          </div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   )}
                 </div>
@@ -593,16 +481,26 @@ export const TechnicianDetails: React.FC<TechnicianDetailsProps> = ({
                           <FileText size={16} />
                         </div>
                         <div>
-                          <p className="text-sm font-bold text-slate-800 leading-none">{doc.type}</p>
+                          <p className="text-sm font-bold text-slate-800 leading-none">{getDocTypeName(doc.documentTypeId) || doc.type}</p>
                           <p className="text-[10px] text-slate-400 mt-1.5">Uploaded: {new Date(doc.uploadDate).toLocaleDateString()} • File: <span className="font-semibold text-slate-500">{doc.fileName}</span></p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <div className={`text-[9px] font-black px-2 py-0.5 rounded border ${isExpired ? 'bg-rose-100/40 text-rose-700 border-rose-100' : 'bg-emerald-100/40 text-[#18863A] border border-emerald-100/50'}`}>
                           {doc.expiryDate ? (isExpired ? `Expired: ${new Date(doc.expiryDate).toLocaleDateString()}` : `Expires: ${new Date(doc.expiryDate).toLocaleDateString()}`) : 'No Expiry'}
                         </div>
+                        {(() => {
+                          const st = getApprovalStatusBadge(getDocStatus(doc));
+                          const Icon = st.icon;
+                          return (
+                            <div className={`text-[9px] font-black px-2 py-0.5 rounded-full border inline-flex items-center gap-1 ${st.bg}`}>
+                              <Icon size={10} />
+                              {st.label}
+                            </div>
+                          );
+                        })()}
                         <button 
-                          onClick={() => onUpload(technician.id, doc.type)}
+                          onClick={() => onUpload(technician.id, getDocTypeName(doc.documentTypeId) || doc.type)}
                           className="p-1.5 hover:bg-slate-100 text-slate-500 hover:text-slate-800 rounded-lg transition-all border border-slate-200 bg-white cursor-pointer"
                           title="Update Document"
                         >
@@ -628,78 +526,47 @@ export const TechnicianDetails: React.FC<TechnicianDetailsProps> = ({
 
                     {expandedDocId === doc.id && (
                       <div className="pt-3 border-t border-slate-100 space-y-3 animate-in fade-in duration-200">
-                        {/* Safety Score */}
-                        <div className="flex items-center justify-between bg-slate-50/50 p-2.5 rounded-xl border border-slate-150/60">
-                          <span className="text-[10px] font-black uppercase text-slate-400">EHS Safety Index:</span>
-                          <span className={`text-[10px] font-black px-2 py-0.5 rounded border ${
-                            doc.complianceResult?.score !== undefined && doc.complianceResult.score >= 80
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-150"
-                              : doc.complianceResult?.score !== undefined && doc.complianceResult.score >= 60
-                                ? "bg-amber-50 text-amber-700 border-amber-150"
-                                : "bg-rose-50 text-rose-700 border-rose-150"
-                          }`}>
-                            {doc.complianceResult?.score !== undefined ? `${doc.complianceResult.score}%` : "0%"}
-                          </span>
-                        </div>
+                        {/* File Preview — prefer filesystem path over base64 */}
+                      {(() => {
+                        const docFileSrc = doc.file_path
+                          ? `/api/v1/ehs/documents/${doc.id}/file`
+                          : doc.fileData || null;
+                        if (!docFileSrc) return null;
 
-                        {/* Summary */}
-                        {doc.summary && (
-                          <div className="space-y-1">
-                            <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">AI Audit Summary</span>
-                            <p className="text-[11px] text-slate-600 font-medium leading-relaxed bg-slate-50/40 p-2.5 rounded-xl border border-slate-150/50">
-                              {doc.summary}
-                            </p>
-                          </div>
-                        )}
+                        const isImage = doc.fileMimeType?.startsWith("image/") ||
+                          doc.fileName?.match(/\.(png|jpg|jpeg|gif|webp|svg)$/i);
 
-                        {/* Failures & Flagged Issues */}
-                        <div className="space-y-1.5">
-                          <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">Flagged Compliance Exceptions</span>
-                          {doc.flaggedIssues && doc.flaggedIssues.length > 0 ? (
-                            <div className="space-y-1.5">
-                              {doc.flaggedIssues.map((issue, idx) => (
-                                <div key={idx} className="flex items-start gap-2 p-2.5 bg-rose-50/50 border border-rose-100 rounded-xl text-[11px] text-rose-800 leading-relaxed font-semibold">
-                                  <ShieldAlert size={12} className="text-rose-500 shrink-0 mt-0.5" />
-                                  <span>{issue}</span>
-                                </div>
-                              ))}
+                        return (
+                          <div className="bg-slate-50/50 rounded-xl border border-slate-150/60 overflow-hidden">
+                            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-slate-100/80">
+                              <Eye size={12} className="text-slate-400" />
+                              <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Document Preview</span>
                             </div>
-                          ) : doc.complianceResult?.issues && doc.complianceResult.issues.length > 0 ? (
-                            <div className="space-y-1.5">
-                              {doc.complianceResult.issues.map((issue, idx) => (
-                                <div key={idx} className="flex items-start gap-2 p-2.5 bg-rose-50/50 border border-rose-100 rounded-xl text-[11px] text-rose-800 leading-relaxed font-semibold">
-                                  <ShieldAlert size={12} className="text-rose-500 shrink-0 mt-0.5" />
-                                  <span>{issue}</span>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-[11px] text-emerald-800 font-semibold bg-emerald-50/25 p-2.5 rounded-xl border border-emerald-100/50 leading-relaxed flex items-center gap-1.5">
-                              <CheckCircle2 size={12} className="text-[#18863A]" />
-                              No compliance issues flagged. This document is certified.
-                            </p>
-                          )}
-                        </div>
-
-                        {/* Corrective Actions Recommendations */}
-                        {doc.complianceResult?.recommendations && (
-                          <div className="space-y-1">
-                            <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">Corrective Action Recommendations</span>
-                            <p className="text-[11px] text-amber-800 font-semibold bg-amber-50/20 p-2.5 rounded-xl border border-amber-100/50 leading-relaxed">
-                              {doc.complianceResult.recommendations}
-                            </p>
+                            {isImage ? (
+                              <div className="flex items-center justify-center p-3">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={docFileSrc}
+                                  alt={doc.fileName}
+                                  className="max-h-48 w-auto object-contain rounded-lg shadow-xs"
+                                  referrerPolicy="no-referrer"
+                                />
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-center gap-3 p-4">
+                                <a
+                                  href={docFileSrc}
+                                  download={doc.fileName}
+                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-bold hover:bg-indigo-100 transition-all border border-indigo-100 cursor-pointer"
+                                >
+                                  <Eye size={12} />
+                                  Download PDF
+                                </a>
+                              </div>
+                            )}
                           </div>
-                        )}
-
-                        {/* Approval comments */}
-                        {doc.approvalChainComments && doc.approvalChainComments.length > 0 && (
-                          <div className="space-y-1">
-                            <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider block">Auditor Review Comments</span>
-                            <div className="text-[11px] text-slate-600 bg-slate-50 p-2.5 rounded-xl border border-slate-150/70 font-semibold leading-relaxed">
-                              {doc.approvalChainComments.join(" | ")}
-                            </div>
-                          </div>
-                        )}
+                        );
+                      })()}
                       </div>
                     )}
                   </li>

@@ -8,14 +8,14 @@ export default function ContractorsPage() {
     user,
     contractors,
     refetchData,
-    setSysAlert,
+    triggerBannerAlert,
   } = useApp();
 
   return (
     <ContractorsView
       user={user}
       contractors={contractors}
-      triggerBannerAlert={(type: string, msg: string) => setSysAlert({ type, message: msg })}
+      triggerBannerAlert={triggerBannerAlert}
       refetchData={refetchData}
     />
   );

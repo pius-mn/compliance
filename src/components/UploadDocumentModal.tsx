@@ -12,8 +12,7 @@ import {
   ArrowRight, 
   ShieldAlert,
   ChevronRight,
-  RefreshCw,
-  BadgeAlert
+  RefreshCw
 } from "lucide-react";
 import { User, DocumentType, Role } from "../types";
 import { safeJson } from "../utils/helpers";
@@ -25,8 +24,6 @@ interface NewDocState {
   technicianId?: string;
   documentTypeId?: string;
   expiryDate?: string;
-  projectId?: string;
-  previousVersionId?: string;
   [key: string]: unknown;
 }
 
@@ -60,10 +57,7 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
   setDragActive,
   user,
   technicians,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   allDocumentTypes,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  allRoles,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -109,6 +103,7 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
   };
 
   // Master upload & AI-auditing sequence
+  // The AI verify endpoint now handles DB insertion directly when verification passes.
   const handleUploadFlow = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!uploadedFileBase64) return;
@@ -135,11 +130,11 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
       setCurrentProgressPercent(25);
       await new Promise(resolve => setTimeout(resolve, 800));
 
-      // Step 2: Running AI Verify Endpoint
-      setCurrentProgressText("Safaricom Central AI: Analyzing EHS guidelines & authenticity...");
+      // Step 2: Running AI Verify Endpoint — now handles DB insertion if verification passes
+      setCurrentProgressText("Safaricom Central AI: Analyzing EHS guidelines, expiry & authenticity...");
       setCurrentProgressPercent(50);
 
-      const matchedTech = technicians.find(t => t.id === newDoc.technicianId);
+      const matchedTech = technicians.find(t => String(t.id) === String(newDoc.technicianId));
       const aiRes = await fetch(`${API_BASE}/ehs/ai-verify`, {
         method: "POST",
         headers,
@@ -148,7 +143,10 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
           type: newDoc.type,
           fileBase64: uploadedFileBase64,
           fileMimeType: uploadedFileMimeType,
-          technicianName: matchedTech ? matchedTech.name : ""
+          technicianName: matchedTech ? matchedTech.name : "",
+          technicianId: newDoc.technicianId,
+          fileName: newDoc.fileName,
+          documentTypeId: newDoc.documentTypeId,
         })
       });
 
@@ -165,49 +163,25 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
       setCurrentProgressPercent(75);
       await new Promise(resolve => setTimeout(resolve, 600));
 
-      // Evaluate EHS standing and check if it violates strict Field Technician submission guidelines
-      const hasIssues = aiData?.flaggedIssues && aiData.flaggedIssues.length > 0;
-      const lowScore = aiData?.score < 70;
+      // Evaluate EHS standing
+      const verificationFailed = !aiData?.verifiedByAi;
 
       const isTech = user?.role === Role.Technician;
-      if ((hasIssues || lowScore) && isTech) {
-        // Force strict block for Field Technicians so they can review EHS issues
+      if (verificationFailed && isTech) {
         setCurrentProgressPercent(100);
         setStep("compliance-failed");
         return;
       }
 
-      // Step 3: Register in compliance ledger database
-      setCurrentProgressText("Creating secure safety record & routing to Safaricom approval chain...");
-      setCurrentProgressPercent(90);
-
-      const payload = {
-        ...newDoc,
-        score: aiData?.score || null,
-        issues: aiData?.flaggedIssues || [],
-        recommendations: aiData?.recommendations || "Verified safety compliance",
-        verifiedByAi: aiData?.verifiedByAi || false,
-        summary: aiData?.summary || null,
-        flaggedIssues: aiData?.flaggedIssues || null,
-        extractedData: aiData ? {
-          safetyProtocols: aiData.safetyProtocols,
-          environmentalImpacts: aiData.environmentalImpacts,
-          incidentReports: aiData.incidentReports
-        } : null,
-        userId: user?.id,
-        expiryDate: newDoc.expiryDate || null
-      };
-
-      const submitRes = await fetch(`${API_BASE}/ehs/documents`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(payload)
-      });
-
-      if (!submitRes.ok) {
-        const errorData = await safeJson(submitRes);
-        setUploadError(errorData?.error || "EHS document registration rules rejected this filing.");
-        setStep("error");
+      // If AI verification passed, the endpoint already inserted the document
+      if (!aiData.documentInserted) {
+        setCurrentProgressPercent(100);
+        if (verificationFailed) {
+          setStep("compliance-failed");
+        } else {
+          setUploadError(aiData.documentInsertError || "Document could not be registered.");
+          setStep("error");
+        }
         return;
       }
 
@@ -223,6 +197,7 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
   };
 
   // Administrator/Manager Bypass Submit Override
+  // Uses the AI-extracted expiry date from the failed verification result.
   const handleAdminOverrideSubmit = async () => {
     if (!aiResult) return;
     setStep("auditing");
@@ -240,19 +215,11 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
     try {
       const payload = {
         ...newDoc,
-        score: aiResult?.score || null,
-        issues: aiResult?.flaggedIssues || [],
-        recommendations: `Admin Override Bypass: ${aiResult?.recommendations || "Verified with compliance warning"}`,
-        verifiedByAi: aiResult?.verifiedByAi || false,
-        summary: aiResult?.summary || null,
-        flaggedIssues: aiResult?.flaggedIssues || null,
-        extractedData: aiResult ? {
-          safetyProtocols: aiResult.safetyProtocols,
-          environmentalImpacts: aiResult.environmentalImpacts,
-          incidentReports: aiResult.incidentReports
-        } : null,
+        verifiedByAi: false,
         userId: user?.id,
-        expiryDate: newDoc.expiryDate || null
+        expiryDate: aiResult?.expiryDate || null, // Use AI-extracted expiry even on override
+        fileBase64: uploadedFileBase64, // Include file data for filesystem storage
+        fileMimeType: uploadedFileMimeType,
       };
 
       const submitRes = await fetch(`${API_BASE}/ehs/documents`, {
@@ -276,7 +243,18 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
     }
   };
 
-  const isPreFilledType = !!newDoc.type;
+  const isPreFilledType = !!newDoc.type || !!newDoc.documentTypeId;
+
+  // When a document type is selected from the dropdown, set both type (name) and documentTypeId
+  const handleDocumentTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedId = e.target.value;
+    const selected = allDocumentTypes.find(dt => String(dt.id) === selectedId);
+    setNewDoc({
+      ...newDoc,
+      documentTypeId: selectedId,
+      type: selected?.name || "",
+    });
+  };
 
   return (
     <div className="bg-white rounded-3xl w-full border border-slate-150 overflow-hidden shadow-2xl flex flex-col" id="upload_document_modal_flow">
@@ -385,7 +363,7 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
           <div className="space-y-4">
             <div>
               <label className="text-[10px] font-black uppercase text-slate-400 block mb-1.5 tracking-wider">
-                Document Type Name
+                Document Type
               </label>
               {isPreFilledType ? (
                 <div className="relative">
@@ -401,29 +379,20 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
                   </span>
                 </div>
               ) : (
-                <input 
-                  type="text" 
-                  value={newDoc.type as string}
-                  onChange={(e) => setNewDoc({...newDoc, type: e.target.value})}
-                  placeholder="e.g. Environmental Health JSA, Certification"
-                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-[#18863A]/25 focus:border-[#18863A] outline-hidden transition-all text-slate-800 placeholder-slate-400 font-medium"
+                <select
+                  value={newDoc.documentTypeId || ""}
+                  onChange={handleDocumentTypeChange}
+                  className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none transition-all focus:ring-2 focus:ring-[#18863A]/25 focus:border-[#18863A] appearance-none cursor-pointer"
                   required
-                />
+                >
+                  <option value="" disabled>Select a document type...</option>
+                  {allDocumentTypes.map(dt => (
+                    <option key={dt.id} value={dt.id}>{dt.name}</option>
+                  ))}
+                </select>
               )}
             </div>
-            
-            <div>
-              <label className="text-[10px] font-black uppercase text-slate-400 block mb-1.5 tracking-wider flex items-center gap-1">
-                <Calendar size={12} className="text-slate-400" />
-                Expiry Date <span className="text-[9px] font-normal text-slate-400 font-sans italic lowercase">(optional)</span>
-              </label>
-              <input 
-                type="date" 
-                value={newDoc.expiryDate}
-                onChange={(e) => setNewDoc({...newDoc, expiryDate: e.target.value})}
-                className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-[#18863A]/25 focus:border-[#18863A] outline-hidden transition-all text-slate-700 font-medium"
-              />
-            </div>
+            {/* Expiry date is now extracted by AI from the document — no manual input needed */}
           </div>
           
           {/* Action Button */}
@@ -532,36 +501,20 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
 
           <div className="bg-rose-50/20 border-2 border-rose-100 rounded-2xl p-5 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="p-3 bg-rose-50 text-rose-600 border border-rose-100 rounded-xl font-mono text-2xl font-black">
-                {(aiResult?.score as number) || 0}%
+              <div className="p-3 bg-rose-50 text-rose-600 border border-rose-100 rounded-xl font-mono text-lg font-black">
+                ✗
               </div>
               <div>
-                <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Audit Score Granted</p>
-                <p className="text-xs font-bold text-rose-800 mt-0.5">Safaricom EHS compliance score is too low.</p>
+                <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider">AI Verification Failed</p>
+                <p className="text-xs font-bold text-rose-800 mt-0.5">Document did not pass EHS compliance verification.</p>
               </div>
             </div>
-            <span className="text-[10px] font-black px-2 py-1 rounded bg-rose-100 text-rose-800 border border-rose-200">
-              Required: ≥ 70%
-            </span>
           </div>
 
-          <div className="space-y-3">
-            <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-              <BadgeAlert size={14} className="text-rose-500" />
-              Flagged Safety Exceptions ({((aiResult?.flaggedIssues as unknown[])?.length) || 0})
-            </h4>
-            <div className="max-h-44 overflow-y-auto border border-slate-150 rounded-2xl p-4 bg-slate-50 space-y-2.5 custom-scrollbar">
-              {(aiResult?.flaggedIssues as unknown[])?.length > 0 ? (
-                (aiResult?.flaggedIssues as unknown as string[]).map((issue: string, idx: number) => (
-                  <div key={idx} className="flex items-start gap-2 text-xs">
-                    <span className="mt-1 w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
-                    <span className="text-slate-600 font-medium leading-relaxed">{issue}</span>
-                  </div>
-                ))
-              ) : (
-                <p className="text-xs text-slate-500 font-medium">No explicit issues flagged, but overall EHS metrics fall short.</p>
-              )}
-            </div>
+          <div className="bg-rose-50/20 border border-rose-100 rounded-2xl p-4">
+            <p className="text-xs text-rose-800 font-medium leading-relaxed">
+              {String(aiResult?.failureReason || "The document did not pass Safaricom AI EHS compliance verification.")}
+            </p>
           </div>
 
           {/* Conditional Controls based on user role */}
@@ -613,32 +566,13 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
             <p className="text-xs text-slate-400 max-w-sm mx-auto mt-1">Safaricom EHS Audit Ledger registered successfully and added to the approval queue.</p>
           </div>
 
-          <div className="bg-slate-50 border border-slate-150 rounded-2xl p-5 text-left divide-y divide-slate-100 space-y-3.5">
-            <div className="flex items-center justify-between pb-3">
-              <span className="text-xs font-bold text-slate-500">Compliance Audit Score</span>
-              <span className="text-sm font-black text-[#18863A] bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded">
-                {(aiResult?.score as number) || 100}%
-              </span>
-            </div>
-
-            <div className="pt-3.5 space-y-2.5">
-              <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Identified EHS Parameters</span>
-              <div className="max-h-28 overflow-y-auto space-y-1.5 custom-scrollbar">
-                {(aiResult?.safetyProtocols as unknown[])?.length > 0 ? (
-                  (aiResult?.safetyProtocols as unknown as string[]).map((p: string, idx: number) => (
-                    <div key={idx} className="flex items-start gap-1.5 text-[11px] font-medium text-slate-600">
-                      <CheckCircle size={10} className="text-[#18863A] shrink-0 mt-0.5" />
-                      <span>{p}</span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="flex items-start gap-1.5 text-[11px] font-medium text-slate-600">
-                    <CheckCircle size={10} className="text-[#18863A] shrink-0 mt-0.5" />
-                    <span>Verified general work safety certification compliance</span>
-                  </div>
-                )}
+          <div className="bg-slate-50 border border-slate-150 rounded-2xl p-5 text-left space-y-3">
+            {!!aiResult?.expiryDate && (
+              <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-600">
+                <Calendar size={12} className="text-slate-400" />
+                <span>Expiry: <strong>{String(aiResult?.expiryDate) || "-"}</strong></span>
               </div>
-            </div>
+            )}
           </div>
 
           <button

@@ -44,7 +44,6 @@ export async function createUser(
       phone: phone || "+254 7XX XXX XXX",
       specialization: specialization || "General Technician",
       status: "EHS Check Needed",
-      overallEhsScore: 0,
       contractorId: finalContractorId,
       workRoleIds: []
     });

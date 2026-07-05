@@ -34,13 +34,14 @@ export default function EhsPage() {
       {...viewProps}
       docPage={docPage}
       setDocPage={setDocPage}
-      triggerBannerAlert={(type: string, msg: string) => appState.setSysAlert({ type, message: msg })}
+      triggerBannerAlert={appState.triggerBannerAlert}
       filteredDocuments={appState.documents || []}
       paginatedDocuments={appState.documents || []}
       documents={appState.documents || []}
       docsTotal={docsTotal}
       getActiveContractorLabel={getActiveContractorLabel}
       filteredBranches={appState.contractors}
+      allDocumentTypes={appState.allDocumentTypes || []}
     />
   );
 }
