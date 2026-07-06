@@ -4,7 +4,9 @@ import { SitePhoto, User } from "../types";
 import { getAll, getById, insert, remove } from "../lib";
 import { isSafaricomRole } from "../lib/permissions";
 
-const UPLOADS_DIR = path.join(process.cwd(), "public", "uploads", "site-photos");
+function getUploadsDir(): string {
+  return path.join(process.cwd(), "public", "uploads", "site-photos");
+}
 
 /**
  * Decode a base64 data URL, determine the file extension, and write the
@@ -31,7 +33,7 @@ function saveBase64ToDisk(base64DataUrl: string, projectId: number): string {
   const ext = extMap[mime] || "jpg";
 
   // Create project subdirectory if it doesn't exist
-  const projectDir = path.join(UPLOADS_DIR, String(projectId));
+  const projectDir = path.join(getUploadsDir(), String(projectId));
   if (!fs.existsSync(projectDir)) {
     fs.mkdirSync(projectDir, { recursive: true });
   }
