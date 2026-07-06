@@ -205,6 +205,13 @@ const MIGRATIONS: Migration[] = [
       "ALTER TABLE milestones DROP COLUMN clearedPrerequisites",
     ],
   },
+  {
+    name: "seed_ai_score_threshold",
+    description: "Seed the default AI score threshold (50) into appSettings",
+    sql: [
+      "INSERT INTO appSettings (settingKey, settingValue, updatedAt) SELECT 'aiScoreThreshold', '50', NOW() WHERE NOT EXISTS (SELECT 1 FROM appSettings WHERE settingKey = 'aiScoreThreshold')",
+    ],
+  },
 ];
 
 async function runMigrations(p: mysql.Pool): Promise<void> {
@@ -444,6 +451,14 @@ export async function initDatabase(): Promise<void> {
       aiScore DOUBLE NULL,
       aiMissedItems JSON NULL,
       aiAnalyzedAt TEXT NULL
+    )
+  `);
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS appSettings (
+      id INT NOT NULL PRIMARY KEY AUTO_INCREMENT,
+      settingKey TEXT NOT NULL,
+      settingValue TEXT NOT NULL,
+      updatedAt TEXT NOT NULL
     )
   `);
 

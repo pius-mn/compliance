@@ -125,14 +125,8 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
     }
 
     try {
-      // Step 1: Simulating OCR Scan & parsing
-      setCurrentProgressText("Safaricom Central AI: Scanning document structures...");
-      setCurrentProgressPercent(25);
-      await new Promise(resolve => setTimeout(resolve, 800));
-
-      // Step 2: Running AI Verify Endpoint — now handles DB insertion if verification passes
-      setCurrentProgressText("Safaricom Central AI: Analyzing EHS guidelines, expiry & authenticity...");
-      setCurrentProgressPercent(50);
+      setCurrentProgressText("Safaricom Central AI: Scanning document structures & running EHS compliance check...");
+      setCurrentProgressPercent(30);
 
       const matchedTech = technicians.find(t => String(t.id) === String(newDoc.technicianId));
       const aiRes = await fetch(`${API_BASE}/ehs/ai-verify`, {
@@ -161,7 +155,6 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
 
       setCurrentProgressText("Safaricom Central AI: Checking compliance standards & expiration dates...");
       setCurrentProgressPercent(75);
-      await new Promise(resolve => setTimeout(resolve, 600));
 
       // Evaluate EHS standing
       const verificationFailed = !aiData?.verifiedByAi;

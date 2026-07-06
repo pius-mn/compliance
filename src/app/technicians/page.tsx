@@ -48,6 +48,14 @@ export default function TechniciansPage() {
     fetchTechsPage();
   }, [fetchTechsPage]);
 
+  // Fetch per-page reference data once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    appState.fetchContractorsData();
+    appState.fetchWorkRolesData();
+    appState.fetchDocumentTypesData();
+  }, []);
+
   // Re-fetch when search changes (but debounced via the page reset logic in view)
   useEffect(() => {
     setTechPage(1);

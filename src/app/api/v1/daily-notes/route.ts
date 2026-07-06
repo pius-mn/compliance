@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDailyNote, getAllDailyNotes, upsertDailyNote } from "../../../../services/dailyNotes";
-import { getAll as getAllProjects } from "../../../../lib";
+import { getAll as getAllProjects, getSetting } from "../../../../lib";
 import { requireAuth } from "../../../../lib/routeAuth";
 
 export async function GET(req: Request) {
@@ -46,11 +46,29 @@ export async function PUT(req: Request) {
   if ("error" in auth) return auth.error;
 
   try {
+    // Read AI score threshold from DB (default 50)
+    const thresholdRaw = await getSetting("aiScoreThreshold");
+    const AI_SCORE_THRESHOLD = thresholdRaw ? Number(thresholdRaw) : 50;
+
     const { projectId, date, hazard, solution, aiScore, aiMissedItems } = await req.json();
     if (!projectId || !date) {
       return NextResponse.json(
         { error: "projectId and date are required" },
         { status: 400 }
+      );
+    }
+
+    // Enforce AI score threshold: if the AI analyzed the pair and the score
+    // is below the threshold, reject the save to prevent bypassing the check.
+    if (aiScore != null && Number(aiScore) < AI_SCORE_THRESHOLD) {
+      return NextResponse.json(
+        {
+          error: `Containment solution is inadequate (AI rating: ${aiScore}%). ` +
+                 `Improve the solution to address the identified hazards before saving.`,
+          aiScore: Number(aiScore),
+          threshold: AI_SCORE_THRESHOLD,
+        },
+        { status: 422 }
       );
     }
 

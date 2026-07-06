@@ -17,6 +17,9 @@ interface DailyActivitiesProps {
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+// Default AI score threshold (overridden by server setting after mount)
+const DEFAULT_AI_SCORE_THRESHOLD = 50;
+
 function getActivityLevel(count: number): 0 | 1 | 2 | 3 {
   if (count === 0) return 0;
   if (count <= 1) return 1;
@@ -108,6 +111,20 @@ export const DailyActivities: React.FC<DailyActivitiesProps> = ({
   const [aiScore, setAiScore] = React.useState<number | null>(null);
   const [aiMissedItems, setAiMissedItems] = React.useState<string[] | null>(null);
   const [aiAnalyzing, setAiAnalyzing] = React.useState(false);
+  const [aiScoreThreshold, setAiScoreThreshold] = React.useState(DEFAULT_AI_SCORE_THRESHOLD);
+
+  // Fetch the configured AI score threshold from the server on mount
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const res = await apiFetchJson(`/api/v1/settings/ai-score-threshold`);
+        if (res.ok) {
+          const data = await res.json();
+          setAiScoreThreshold(data.threshold);
+        }
+      } catch {}
+    })();
+  }, []);
 
   // Toast notifications now handled by react-hot-toast (global Toaster in AppLayout)
 
@@ -335,6 +352,15 @@ export const DailyActivities: React.FC<DailyActivitiesProps> = ({
             </div>
           </div>
 
+          {/* Subtle AI Progress Bar */}
+          {aiAnalyzing && (
+            <div className="h-1 w-full bg-slate-100 overflow-hidden">
+              <div className="h-full w-full bg-gradient-to-r from-emerald-400 via-emerald-600 to-emerald-400 animate-gradient-x rounded-full"
+                style={{ backgroundSize: '200% 100%' }}
+              />
+            </div>
+          )}
+
           {/* Hazard & Solution Section */}
           <div className="p-4 space-y-3 bg-white">
             <div className="space-y-1">
@@ -367,19 +393,34 @@ export const DailyActivities: React.FC<DailyActivitiesProps> = ({
 
             {/* AI Analysis Results */}
             {aiScore !== null && (
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+              <div className={`rounded-lg p-3 space-y-2 ${
+                aiScore < aiScoreThreshold
+                  ? "bg-red-50 border-2 border-red-300"
+                  : "bg-slate-50 border border-slate-200"
+              }`}>
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
                     AI Hazard-Solution Rating
                   </span>
                   <span className={`text-xs font-black px-1.5 py-0.5 rounded ${
                     aiScore >= 80 ? "bg-emerald-50 text-emerald-700" :
-                    aiScore >= 50 ? "bg-amber-50 text-amber-700" :
+                    aiScore >= aiScoreThreshold ? "bg-amber-50 text-amber-700" :
                     "bg-red-50 text-red-700"
                   }`}>
                     {aiScore}%
                   </span>
                 </div>
+
+                {aiScore < aiScoreThreshold && (
+                  <div className="flex items-center gap-1.5 bg-red-100/50 rounded px-2 py-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 text-red-600 shrink-0" />
+                    <p className="text-[10px] font-bold text-red-700">
+                      Containment solution is inadequate (below {aiScoreThreshold}%).
+                      Improve the solution to address the hazards before saving.
+                    </p>
+                  </div>
+                )}
+
                 {aiMissedItems && aiMissedItems.length > 0 && (
                   <div className="space-y-1">
                     <p className="text-[9px] font-bold text-red-600 uppercase tracking-wider">Missing Elements</p>
@@ -426,7 +467,18 @@ export const DailyActivities: React.FC<DailyActivitiesProps> = ({
                         aiError = true;
                       }
 
-                      // 2. Save notes with AI results
+                      // 2. Check if AI score is below the threshold
+                      if (!aiError && score !== null && score < aiScoreThreshold) {
+                        toast.error(
+                          `AI rating ${score}% — containment solution is inadequate. ` +
+                          `Improve the solution to address the missed elements above before saving.`, 
+                          { duration: 6000 }
+                        );
+                        setAiAnalyzing(false);
+                        return;
+                      }
+
+                      // 3. Save notes with AI results
                       await apiFetchJson(`/api/v1/daily-notes`, {
                         method: "PUT",
                         body: {
@@ -439,7 +491,7 @@ export const DailyActivities: React.FC<DailyActivitiesProps> = ({
                         },
                       });
 
-                      // 3. Show toast
+                      // 4. Show toast
                       if (aiError) {
                         toast.error("Notes saved, but AI rating unavailable");
                       } else {

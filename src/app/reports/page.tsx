@@ -16,6 +16,8 @@ export default function ReportsPage() {
       appState.fetchEHSDocumentsData(),
       appState.fetchComplianceFlagsData(),
       appState.fetchMilestonesData(),
+      appState.fetchContractorsData(),
+      appState.fetchUsersData(),
     ]);
   });
 

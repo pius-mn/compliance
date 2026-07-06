@@ -187,6 +187,22 @@ function KpiCard({ value, swatchClasses, label, headline, sublabel, sublabelClas
   );
 }
 
+/** Shared CSV-safe-string helper used by all export handlers. */
+function escapeCSV(val: unknown): string {
+  if (val === null || val === undefined) return "";
+  let str = "";
+  try {
+    str = safeString(val);
+  } catch {
+    str = "[Object]";
+  }
+  str = str.replace(/"/g, '""');
+  if (str.includes(",") || str.includes("\n") || str.includes("\r") || str.includes('"')) {
+    return `"${str}"`;
+  }
+  return str;
+}
+
 const ReportingView: React.FC<ReportingViewProps> = ({
   projects,
   technicians,
@@ -202,8 +218,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
   // Filters state
   const [selectedBranchId, setSelectedBranchId] = useState<string>("all");
   const [selectedProjectId, setSelectedProjectId] = useState<string>("all");
-  const [selectedStatus, setSelectedStatus] = useState<string>("all");
-  const [minEhsScore, setMinEhsScore] = useState<number>(0);
+
 
   // Compliance Engine Panel states
   const [complianceStandardFilter, setComplianceStandardFilter] = useState<string>("all");
@@ -228,8 +243,6 @@ const ReportingView: React.FC<ReportingViewProps> = ({
   const handleResetFilters = () => {
     setSelectedBranchId("all");
     setSelectedProjectId("all");
-    setSelectedStatus("all");
-    setMinEhsScore(0);
   };
 
   // Contractor isolation security constraints (Contractor Managers / Contractor Safety Leads can only view their own contractor)
@@ -253,20 +266,17 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       
       if (!isCentral && techUser.contractorId !== currentUser?.contractorId) return false;
       if (activeContractorId !== "all" && String(techUser.contractorId) !== activeContractorId) return false;
-      if (t.overallEhsScore < minEhsScore) return false;
       return true;
     });
-  }, [technicians, activeContractorId, isCentral, currentUser, allUsers, minEhsScore]);
+  }, [technicians, activeContractorId, isCentral, currentUser, allUsers]);
 
   const filteredDocs = useMemo(() => {
     return (documents || []).filter(d => {
       if (!isCentral && d.contractorId !== currentUser?.contractorId) return false;
       if (activeContractorId !== "all" && String(d.contractorId) !== String(activeContractorId)) return false;
-      // projectId removed from documents table
-      if (selectedStatus !== "all" && getDocStatus(d) !== selectedStatus) return false;
       return true;
     });
-  }, [documents, activeContractorId, selectedProjectId, selectedStatus, isCentral, currentUser]);
+  }, [documents, activeContractorId, isCentral, currentUser]);
 
   // Memoized filtered list of compliance flags
   const filteredFlags = useMemo(() => {
@@ -430,7 +440,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       });
       const avgBranchScore = branchTechs.length 
         ? Math.round(branchTechs.reduce((sum, t) => sum + safeNumber(t.overallEhsScore), 0) / branchTechs.length)
-        : 75; // baseline/default
+        : 0; // No crew assigned
       return {
         name: b.name,
         code: b.code,
@@ -460,7 +470,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       const projectTechs = (technicians || []).filter(t => assignedTechIds.includes(t.id));
       const avgProjScore = projectTechs.length
         ? Math.round(projectTechs.reduce((sum, t) => sum + safeNumber(t.overallEhsScore), 0) / projectTechs.length)
-        : 80; // Baseline default if none assigned
+        : 0; // No crew assigned
       return {
         projectName: safeString(p.name).length > 20 ? safeString(p.name).substring(0, 20) + "..." : safeString(p.name),
         "Avg safety score (%)": avgProjScore,
@@ -553,21 +563,6 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       "Resolution Comments"
     ];
 
-    const escapeCSV = (val: unknown) => {
-      if (val === null || val === undefined) return "";
-      let str = "";
-      try {
-        str = safeString(val);
-      } catch {
-        str = "[Object]";
-      }
-      str = str.replace(/"/g, '""');
-      if (str.includes(",") || str.includes("\n") || str.includes("\r") || str.includes('"')) {
-        return `"${str}"`;
-      }
-      return str;
-    };
-
     const csvRows = [
       headers.join(","),
       ...flagsToExport.map(flag => [
@@ -592,6 +587,184 @@ const ReportingView: React.FC<ReportingViewProps> = ({
     const link = document.createElement("a");
     link.setAttribute("href", url);
     link.setAttribute("download", `safaricom_compliance_report_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Safe Export to CSV handler for expiring documents report
+  const handleExportExpiringDocsCSV = () => {
+    const headers = [
+      "Holder Name",
+      "Phone",
+      "Regional Presence",
+      "Document Type",
+      "File Name",
+      "Expiration Date",
+      "Days Remaining",
+      "Urgency Tier",
+    ];
+
+    const csvRows = [
+      headers.join(","),
+      ...expiringDocsReport.map(doc => {
+        const docBranch = contractors.find(b => b.id === doc.contractorId)?.name || "N/A";
+        const techProfile = technicians.find(t => t.id === doc.technicianId);
+        const isExpired = doc.remainingDays < 0;
+        const { label: urgencyLabel } = getUrgencyMeta(doc.remainingDays, isExpired);
+        return [
+          escapeCSV(doc.technicianName),
+          escapeCSV(techProfile?.phone || ""),
+          escapeCSV(docBranch),
+          escapeCSV(doc.type),
+          escapeCSV(doc.fileName),
+          escapeCSV(doc.expiryDate),
+          escapeCSV(isExpired ? `Expired ${Math.abs(doc.remainingDays)}d ago` : `${doc.remainingDays} days`),
+          escapeCSV(urgencyLabel),
+        ].join(",");
+      }),
+    ];
+
+    const csvContent = csvRows.join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `document_expiration_report_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Safe Export to CSV handler for site clearance ledger
+  const handleExportSiteClearanceCSV = () => {
+    const headers = [
+      "Project",
+      "Partner",
+      "Current Milestone",
+      "Milestone Status",
+      "Safaricom Lead",
+      "Safety Lead",
+      "Avg Safety Score (%)",
+      "Crew Count",
+      "Clearance Status",
+    ];
+
+    const csvRows = [
+      headers.join(","),
+      ...filteredProjects.map(p => {
+        const partnerName = contractors.find(b => b.id === p.contractorId)?.name || "Not assigned";
+        const leadName = allUsers.find(u => u.id === p.projectLeadId)?.name || "Unassigned Lead";
+        const ehsOfficer = allUsers.find(u => u.id === p.ehsOfficerId)?.name || "Unassigned EHS";
+        const assignedIds = p.assignedTechnicianIds || [];
+        const matchedTechs = (technicians || []).filter(t => t && assignedIds.includes(t.id));
+        const averageScore = matchedTechs.length
+          ? Math.round(matchedTechs.reduce((sum, t) => sum + safeNumber(t.overallEhsScore), 0) / matchedTechs.length)
+          : 0;
+        const hasCrew = matchedTechs.length > 0;
+        const { status: evaluatedStatus } = hasCrew
+          ? getClearanceEvaluation(averageScore)
+          : { status: "No crew" };
+
+        const projectMilestones = (milestones || []).filter(m => m.projectId === p.id);
+        let currentMilestone = projectMilestones.find(m => m.status === "In Progress" || m.status === "Blocked");
+        if (!currentMilestone) {
+          currentMilestone = projectMilestones.find(m => m.status === "Pending");
+        }
+        if (!currentMilestone && projectMilestones.length > 0) {
+          currentMilestone = projectMilestones[projectMilestones.length - 1];
+        }
+
+        return [
+          escapeCSV(p.name),
+          escapeCSV(partnerName),
+          escapeCSV(currentMilestone ? currentMilestone.title : "Not Started"),
+          escapeCSV(currentMilestone ? currentMilestone.status : ""),
+          escapeCSV(leadName),
+          escapeCSV(ehsOfficer),
+          escapeCSV(averageScore),
+          escapeCSV(matchedTechs.length),
+          escapeCSV(evaluatedStatus),
+        ].join(",");
+      }),
+    ];
+
+    const csvContent = csvRows.join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `site_clearance_ledger_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Safe Export to CSV handler for KPI grid data
+  const handleExportKPICSV = () => {
+    const headers = ["Metric", "Value"];
+
+    const rows = [
+      ["Compliance Index", `${stats.avgScore}%`],
+      ["Audit Approval Rate", `${stats.approvalRate}%`],
+      ["Total Uploaded Cert Files", String(stats.totalDocs)],
+      ["Active Hazard Flags", String(stats.issueCount)],
+      ["Contractor Projects", String(filteredProjects.length)],
+      ["Total Rollout Distance (km)", String(stats.totalRolloutDistance)],
+      [],
+      ["--- Partner Performance League ---", "", ""],
+      ["Partner Name", "Score (%)", "Deployed Crew"],
+      ...stats.partnerStats.map(p => [p.name, `${p.score}%`, String(p.techCount)]),
+    ];
+
+    const csvContent = rows.map(r => r.join(",")).join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `kpi_metrics_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Safe Export to CSV handler for chart data
+  const handleExportChartsCSV = () => {
+    // Part 1: Project-wise safety scores
+    const projectHeaders = ["Section", "Project Name", "Avg Safety Score (%)", "Distance Coverage Index"];
+    const projectRows = projectChartData.map(d => [
+      "Project Scores",
+      escapeCSV(d.projectName),
+      String(d["Avg safety score (%)"]),
+      String(d["Distance Coverage Index"]),
+    ]);
+
+    // Part 2: Document status distribution
+    const docHeaders = ["Section", "Document Status", "Count"];
+    const docRows = documentStatusPieData.map(d => [
+      "Doc Status Distribution",
+      escapeCSV(d.name),
+      String(d.value),
+    ]);
+
+    const csvRows = [
+      projectHeaders.join(","),
+      ...projectRows.map(r => r.join(",")),
+      [],
+      docHeaders.join(","),
+      ...docRows.map(r => r.join(",")),
+    ];
+
+    const csvContent = csvRows.join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `charts_data_${new Date().toISOString().slice(0, 10)}.csv`);
     link.style.visibility = "hidden";
     document.body.appendChild(link);
     link.click();
@@ -1000,9 +1173,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
           >
             <RefreshCw className="w-3 h-3" /> Reset Filter Settings
           </button>
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        </div>          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <LabeledSelect
             label="Filter by Partner Contractor:"
             value={String(activeContractorId)}
@@ -1025,38 +1196,20 @@ const ReportingView: React.FC<ReportingViewProps> = ({
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </LabeledSelect>
-
-          <LabeledSelect
-            label="Cert Upload Status:"
-            value={selectedStatus}
-            onChange={(e) => setSelectedStatus(e.target.value)}
-          >
-            <option value="all">All Submission Statuses</option>
-            <option value="Approved">Verified / Approved</option>
-            <option value="Pending Central Approval">Pending Central HQ Approval</option>
-            <option value="Pending Contractor Approval">Pending Contractor EHS Lead Approval</option>
-            <option value="Rejected">Rejected Compliance Files</option>
-          </LabeledSelect>
-
-          {/* Minimum safety rating */}
-          <div>
-            <label className="text-[9px] uppercase tracking-wider font-extrabold text-slate-500 dark:text-slate-400 block mb-1">
-              Min overall Crew Safety Score: {minEhsScore > 0 ? `${minEhsScore}%` : "All scores"}
-            </label>
-            <input
-              type="range"
-              min="0"
-              max="95"
-              step="5"
-              value={minEhsScore}
-              onChange={(e) => setMinEhsScore(parseInt(e.target.value))}
-              className="w-full accent-[#E61C24] cursor-pointer h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg mt-2.5"
-            />
-          </div>
         </div>
       </div>
 
       {/* Key Metric KPI grid */}
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[10px] font-extrabold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Key Performance Indicators</span>
+        <button
+          onClick={handleExportKPICSV}
+          className="px-2 py-1 bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold text-[10px] rounded-lg transition flex items-center gap-1 shadow-sm"
+          title="Export KPI metrics data to CSV"
+        >
+          <Download className="w-3 h-3" /> Export KPI Data
+        </button>
+      </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 sm:gap-6">
         <KpiCard
           value={`${stats.avgScore}%`}
@@ -1145,7 +1298,16 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
         {/* Chart 1: Project-wise EHS scores comparison */}
         <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-3xs">
-          <h3 className="font-bold text-xs text-slate-800 dark:text-slate-100 uppercase tracking-wider mb-4">Project-wise Safety Score Index Comparison</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-xs text-slate-800 dark:text-slate-100 uppercase tracking-wider">Project-wise Safety Score Index Comparison</h3>
+            <button
+              onClick={handleExportChartsCSV}
+              className="px-2 py-1 bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold text-[10px] rounded-lg transition flex items-center gap-1 shadow-sm shrink-0"
+              title="Export chart data to CSV"
+            >
+              <Download className="w-3 h-3" /> Export Data
+            </button>
+          </div>
 
           <div className="h-[220px] sm:h-[250px] w-full">
             {projectChartData.length > 0 ? (
@@ -1187,7 +1349,16 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
         {/* Chart 2: Safety Certificate Upload verification State distribution */}
         <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-3xs">
-          <h3 className="font-bold text-xs text-slate-800 dark:text-slate-100 uppercase tracking-wider mb-4">Verification State Distribution (Safety Audits)</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-xs text-slate-800 dark:text-slate-100 uppercase tracking-wider">Verification State Distribution (Safety Audits)</h3>
+            <button
+              onClick={handleExportChartsCSV}
+              className="px-2 py-1 bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold text-[10px] rounded-lg transition flex items-center gap-1 shadow-sm shrink-0"
+              title="Export chart data to CSV"
+            >
+              <Download className="w-3 h-3" /> Export Data
+            </button>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-12 gap-4 md:h-[250px] items-center">
             <div className="col-span-1 md:col-span-7 h-[200px] md:h-full w-full">
@@ -1506,6 +1677,13 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 Dynamically audit active technician certificates and credentials. Filter or input a customized day-count window to capture impending expirations and prevent unauthorized field work.
               </p>
             </div>
+            <button
+              onClick={handleExportExpiringDocsCSV}
+              className="px-2.5 py-1 bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold text-[10px] rounded-lg transition flex items-center gap-1 shadow-sm shrink-0 self-start sm:self-center"
+              title="Export expiring documents data to CSV"
+            >
+              <Download className="w-3 h-3" /> Export CSV
+            </button>
           </div>
         </div>
 
@@ -1695,9 +1873,18 @@ const ReportingView: React.FC<ReportingViewProps> = ({
             <h3 className="font-extrabold text-xs text-slate-900 dark:text-slate-100 uppercase">Subcontractor Site Clearance Ledger</h3>
             <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Visual representation of real-time project risk thresholds and crew compliance rates.</p>
           </div>
-          <span className="text-[9px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-full shrink-0">
-            Records Count: {filteredProjects.length}
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleExportSiteClearanceCSV}
+              className="px-2.5 py-1 bg-indigo-700 hover:bg-indigo-800 text-white font-extrabold text-[10px] rounded-lg transition flex items-center gap-1 shadow-sm"
+              title="Export site clearance ledger data to CSV"
+            >
+              <Download className="w-3 h-3" /> Export CSV
+            </button>
+            <span className="text-[9px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-full shrink-0">
+              Records: {filteredProjects.length}
+            </span>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -1710,7 +1897,6 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 <th className="p-4">Safaricom Lead</th>
                 <th className="p-4">Safety Lead</th>
                 <th className="p-4 text-center">Safety Rating Score</th>
-                <th className="p-4 text-center">Clearance Status</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1724,9 +1910,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 const matchedTechs = (technicians || []).filter(t => t && assignedIds.includes(t.id));
                 const averageScore = matchedTechs.length
                   ? Math.round(matchedTechs.reduce((sum, t) => sum + safeNumber(t.overallEhsScore), 0) / matchedTechs.length)
-                  : 80;
-
-                const { status: evaluatedStatus, style: evaluatedStyle } = getClearanceEvaluation(averageScore);
+                  : 0;
 
                 const projectMilestones = (milestones || []).filter(m => m.projectId === p.id);
                 let currentMilestone = projectMilestones.find(m => m.status === "In Progress" || m.status === "Blocked");
@@ -1763,17 +1947,12 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                         <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal whitespace-nowrap">avg ({matchedTechs.length} crew)</span>
                       </div>
                     </td>
-                    <td className="p-4 text-center">
-                      <span className={`px-2.5 py-0.5 rounded-full border text-[9px] font-extrabold uppercase ${evaluatedStyle}`}>
-                        {evaluatedStatus}
-                      </span>
-                    </td>
                   </tr>
                 );
               })}
               {filteredProjects.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="bg-slate-50/50 dark:bg-slate-800/20 p-12 text-center text-slate-400 dark:text-slate-500 text-xs italic">
+                  <td colSpan={6} className="bg-slate-50/50 dark:bg-slate-800/20 p-12 text-center text-slate-400 dark:text-slate-500 text-xs italic">
                     There are no recorded project scopes matching the compliance metrics.
                   </td>
                 </tr>

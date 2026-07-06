@@ -8,6 +8,7 @@ import { apiFetchPage } from "../../utils/apiFetch";
 import { usePageParam } from "../../hooks/usePageParam";
 import type { Project } from "../../types";
 
+
 export default function ProjectsPage() {
   const appState = useApp();
   const [projectPage, setProjectPage] = usePageParam("page", 1);
@@ -22,6 +23,17 @@ export default function ProjectsPage() {
   useEffect(() => {
     fetchProjectsPage();
   }, [fetchProjectsPage]);
+
+  // Fetch per-page data once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    appState.fetchMilestonesData();
+    appState.fetchSitePhotosData();
+    appState.fetchContractorsData();
+    appState.fetchUsersData();
+    appState.fetchPredefinedMilestonesData();
+    appState.fetchPredefinedPrerequisitesData();
+  }, []);
 
   // Reset page when search changes
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { Project, User } from "../types";
-import { getAll, getById, insert, update, remove } from "../lib";
-import { guardContractorAccess } from "../lib/permissions";
+import { getAll, getById, getWhere, insert, update, remove, query } from "../lib";
+import { guardContractorAccess, isContractorRole } from "../lib/permissions";
+import { computeTechnicianEhsScore, buildApprovedDocLookup } from "../utils/helpers";
 
 export async function getProjects(): Promise<Project[]> {
   return await getAll<Project>("projects");
@@ -50,6 +51,55 @@ export async function updateProject(
   if (!original) throw new Error("Project not found");
 
   guardContractorAccess(currentUser, original.contractorId, "project");
+
+  // Contractors can only add technicians that are 100% EHS compliant
+  if (updates.assignedTechnicianIds && isContractorRole(currentUser.role)) {
+    const originalIds: number[] = original.assignedTechnicianIds || [];
+    const newIds = updates.assignedTechnicianIds.filter(
+      (id: number) => !originalIds.includes(id)
+    );
+
+    if (newIds.length > 0) {
+      const [workRoles, approvedDocRows, techRows] = await Promise.all([
+        getAll<{ id: number; documentTypeIds: number[] }>("workRoles"),
+        query(
+          "SELECT technicianId, documentTypeId, rejected, contractorApproverId, centralApproverId, expiryDate FROM documents WHERE rejected = FALSE AND contractorApproverId IS NOT NULL AND centralApproverId IS NOT NULL"
+        ),
+        getWhere<{ id: number; name: string; workRoleIds: number[] | null }>(
+          "technicians",
+          `id IN (${newIds.map(() => "?").join(",")})`,
+          newIds
+        ),
+      ]);
+
+      const approvedDocLookup = buildApprovedDocLookup(
+        approvedDocRows as Parameters<typeof buildApprovedDocLookup>[0]
+      );
+
+      const failures: { id: number; name: string; score: number }[] = [];
+      for (const tech of techRows as { id: number; name: string; workRoleIds: number[] | null }[]) {
+        const score = computeTechnicianEhsScore(
+          tech.id,
+          tech.workRoleIds || [],
+          workRoles,
+          approvedDocLookup
+        );
+
+        if (score < 100) {
+          failures.push({ id: tech.id, name: tech.name, score });
+        }
+      }
+
+      if (failures.length > 0) {
+        const detail = failures
+          .map(f => `${f.name} (ID #${f.id}, score: ${f.score}%)`)
+          .join("; ");
+        throw new Error(
+          `Cannot authorize the following technicians — they do not have 100% EHS compliance: ${detail}. Only fully compliant technicians can be authorized by contractors.`
+        );
+      }
+    }
+  }
 
   // Clean updates - cast removes extra properties like branchId (legacy column)
   const cleanUpdates = updates as Partial<Project>;

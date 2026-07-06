@@ -1,10 +1,11 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { useApp } from "../../context/AppContext";
 import ManagementView from "../../views/ManagementView";
 
 export default function ManagementPage() {
+  const appState = useApp();
   const {
     user,
     authToken,
@@ -18,8 +19,54 @@ export default function ManagementPage() {
     setActionLoading,
     triggerBannerAlert,
     refetchData,
-    ...appState
-  } = useApp();
+    ...rest
+  } = appState;
+
+  // AI score threshold setting
+  const [aiScoreThreshold, setAiScoreThreshold] = useState(50);
+  const [thresholdLoading, setThresholdLoading] = useState(true);
+
+  const fetchThreshold = useCallback(async () => {
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (user && authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const res = await fetch(`/api/v1/settings/ai-score-threshold`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setAiScoreThreshold(data.threshold);
+      }
+    } catch {}
+    setThresholdLoading(false);
+  }, [user, authToken]);
+
+  useEffect(() => {
+    fetchThreshold();
+  }, [fetchThreshold]);
+
+  const handleUpdateThreshold = useCallback(async (newThreshold: number) => {
+    setActionLoading(true);
+    try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (user && authToken) headers["Authorization"] = `Bearer ${authToken}`;
+      const res = await fetch(`/api/v1/settings/ai-score-threshold`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ threshold: newThreshold }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAiScoreThreshold(data.threshold);
+        triggerBannerAlert("success", `AI score threshold updated to ${data.threshold}%`);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        triggerBannerAlert("error", err?.error || "Failed to update threshold");
+      }
+    } catch {
+      triggerBannerAlert("error", "Network error updating threshold");
+    } finally {
+      setActionLoading(false);
+    }
+  }, [user, authToken, triggerBannerAlert, setActionLoading]);
 
   const handleCreateRole = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -179,10 +226,17 @@ export default function ManagementPage() {
     }
   };
 
+  // Fetch work roles + document types once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    appState.fetchWorkRolesData();
+    appState.fetchDocumentTypesData();
+  }, []);
+
   return (
     <ManagementView
       user={user}
-      {...appState}
+      {...rest}
       actionLoading={actionLoading}
       allRoles={allRoles || []}
       allDocumentTypes={allDocumentTypes || []}
@@ -196,6 +250,9 @@ export default function ManagementPage() {
       handleCreateDocumentType={handleCreateDocumentType}
       handleUpdateDocumentType={handleUpdateDocumentType}
       handleDeleteDocumentType={handleDeleteDocumentType}
+      aiScoreThreshold={aiScoreThreshold}
+      onUpdateThreshold={handleUpdateThreshold}
+      thresholdLoading={thresholdLoading}
     />
   );
 }

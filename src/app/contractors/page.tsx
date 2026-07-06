@@ -1,15 +1,23 @@
 "use client";
 
+import { useEffect } from "react";
 import { useApp } from "../../context/AppContext";
 import ContractorsView from "../../views/ContractorsView";
 
 export default function ContractorsPage() {
+  const appState = useApp();
   const {
     user,
     contractors,
     refetchData,
     triggerBannerAlert,
-  } = useApp();
+  } = appState;
+
+  // Fetch contractors once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    appState.fetchContractorsData();
+  }, []);
 
   return (
     <ContractorsView

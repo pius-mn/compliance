@@ -9,6 +9,7 @@ import { usePageParam } from "../../hooks/usePageParam";
 import { getActiveContractorLabel } from "../../utils/helpers";
 import type { TechnicianDocument } from "../../types";
 
+
 export default function EhsPage() {
   const appState = useApp();
   const [docPage, setDocPage] = usePageParam("page", 1);
@@ -26,6 +27,15 @@ export default function EhsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchEHSDocsPage();
   }, [fetchEHSDocsPage]);
+
+  // Fetch per-page data once on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    appState.fetchComplianceFlagsData();
+    appState.fetchContractorsData();
+    appState.fetchUsersData();
+    appState.fetchDocumentTypesData();
+  }, []);
 
   const viewProps = appState as unknown as EhsViewProps;
 

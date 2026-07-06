@@ -29,4 +29,7 @@ export {
   count,
   // ── Transaction support ──────────────────────────────────────────────
   runTransaction,
+  // ── Settings ─────────────────────────────────────────────────────────
+  getSetting,
+  setSetting,
 } from "./database";

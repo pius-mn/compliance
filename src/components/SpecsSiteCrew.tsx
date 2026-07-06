@@ -200,7 +200,7 @@ export const SpecsSiteCrew: React.FC<SpecsSiteCrewProps> = ({
                     >
                       <option value="" disabled>+ Authorize Crew</option>
                       {(technicians || [])
-                        .filter(t => t && !(project.assignedTechnicianIds || []).includes(t.id))
+                        .filter(t => t && !(project.assignedTechnicianIds || []).includes(t.id) && t.overallEhsScore === 100)
                         .map(t => (
                           <option key={t.id} value={t.id}>
                             {t.name} (HSE: {t.overallEhsScore}%)

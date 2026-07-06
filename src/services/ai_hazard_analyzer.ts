@@ -6,11 +6,22 @@
  */
 
 import { GoogleGenAI, Type } from "@google/genai";
+import { withTimeout, TtlCache, isRetryableError, getRetryDelay } from "../utils/aiUtils";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || "dummy_key",
   httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
 });
+
+// ─── In-memory TTL cache ────────────────────────────────────────────────────
+// Avoids redundant Gemini calls when the same hazard+solution pair is
+// re-analyzed (e.g. on re-render or page navigation).
+
+const cache = new TtlCache<HazardAnalysisResult>(5 * 60); // 5 minutes
+
+function getCacheKey(hazard: string, solution: string): string {
+  return `${hazard.slice(0, 200)}::${solution.slice(0, 200)}`;
+}
 
 export interface HazardAnalysisResult {
   score: number; // 0-100 rating of how well the solution addresses the hazard
@@ -25,6 +36,11 @@ export async function analyzeHazardSolution(
   if (!hazard?.trim() || !solution?.trim()) {
     return { score: 0, missedItems: ["Cannot analyze: hazard or solution description is empty."] };
   }
+
+  // ── Check cache first ──────────────────────────────────────────────────
+  const cacheKey = getCacheKey(hazard, solution);
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
 
   const systemInstruction = `You are a Safaricom EHS Safety Auditor AI.
 Your role is to evaluate site safety reports by analyzing the relationship between identified hazards and the reported containment solutions.
@@ -49,45 +65,52 @@ Use standard Kenyan EHS regulations, OSHA standards, and Safaricom HSE protocols
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents,
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            required: ["score", "missedItems"],
-            properties: {
-              score: {
-                type: Type.INTEGER,
-                description: "Rating 0-100 of how well the solution addresses the hazard"
-              },
-              missedItems: {
-                type: Type.ARRAY,
-                items: { type: Type.STRING },
-                description: "List of critical safety elements or actions missing from the solution"
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              required: ["score", "missedItems"],
+              properties: {
+                score: {
+                  type: Type.INTEGER,
+                  description: "Rating 0-100 of how well the solution addresses the hazard"
+                },
+                missedItems: {
+                  type: Type.ARRAY,
+                  items: { type: Type.STRING },
+                  description: "List of critical safety elements or actions missing from the solution"
+                }
               }
             }
           }
-        }
-      });
+        }),
+        15_000 // 15s timeout per attempt
+      );
 
-      if (!response?.text) throw new Error("Empty response from Gemini API");
+      if (!(response as { text?: string })?.text) throw new Error("Empty response from Gemini API");
 
-      const parsed = JSON.parse(response.text);
+      const parsed = JSON.parse((response as { text: string }).text);
       const score = Math.max(0, Math.min(100, Number(parsed.score) || 0));
       const missedItems = Array.isArray(parsed.missedItems)
         ? parsed.missedItems.filter((m: unknown) => typeof m === "string")
         : [];
 
-      return { score, missedItems };
+      const result: HazardAnalysisResult = { score, missedItems };
+
+      // Cache the successful result
+      cache.set(cacheKey, result);
+      return result;
 
     } catch (error) {
-      const isRetryable = /503|UNAVAILABLE|high demand|capacity|overloaded/i.test((error as { message?: string })?.message || "");
+      const { retryable, isTimeout } = isRetryableError(error);
 
-      if (isRetryable && attempt < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, attempt * 1200));
+      if (retryable && attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, getRetryDelay(attempt)));
         continue;
       }
 
@@ -95,7 +118,9 @@ Use standard Kenyan EHS regulations, OSHA standards, and Safaricom HSE protocols
 
       return {
         score: 0,
-        missedItems: ["AI analysis unavailable due to a system error. Manual EHS review required."]
+        missedItems: isTimeout
+          ? ["AI analysis timed out. Manual EHS review required."]
+          : ["AI analysis unavailable due to a system error. Manual EHS review required."]
       };
     }
   }

@@ -92,6 +92,29 @@ export function runComplianceScan(
               flaggedAt: currentDate.toISOString()
             });
           }
+        } else if (tech.overallEhsScore < 100) {
+          // Contractors can only authorize technicians with 100% EHS compliance
+          const ruleName = "Contractor Crew Compliance Threshold";
+          const key = makeIssueKey(proj.id, `${ruleName}::${tech.id}`);
+          activeScannedKeys.add(key);
+
+          const exists = currentFlags.find(
+            (f) => f.targetId === proj.id && f.ruleName === ruleName && f.description.includes(tech.name) && f.status === "Active"
+          );
+          if (!exists) {
+            newFlags.push({
+              id: nextFlagId(),
+              targetId: proj.id,
+              targetType: "project",
+              targetName: proj.name,
+              standard: "Safaricom Internal",
+              ruleName,
+              severity: "Medium",
+              status: "Active",
+              description: `Crew member "${tech.name}" has an EHS score of ${tech.overallEhsScore}%. Contractors can only authorize technicians with a 100% compliance score.`,
+              flaggedAt: currentDate.toISOString()
+            });
+          }
         }
       });
     }

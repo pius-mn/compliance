@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Role, User, DocumentType, WorkRole } from "../types";
-import { Plus, Trash2, Edit2, Save, X, ShieldCheck, FileText, ListCollapse } from "lucide-react";
+import { Plus, Trash2, Edit2, Save, X, ShieldCheck, FileText, ListCollapse, Brain } from "lucide-react";
 
 export interface ManagementViewProps {
   user: User | null;
@@ -19,6 +19,11 @@ export interface ManagementViewProps {
   handleDeleteRole: (roleId: number | string) => Promise<void>;
   handleUpdateDocumentType: (dtId: number | string, name: string) => Promise<void>;
   handleDeleteDocumentType: (dtId: number | string) => Promise<void>;
+
+  // AI score threshold
+  aiScoreThreshold: number;
+  onUpdateThreshold: (threshold: number) => Promise<void>;
+  thresholdLoading: boolean;
 }
 
 const ManagementView: React.FC<ManagementViewProps> = ({
@@ -35,7 +40,10 @@ const ManagementView: React.FC<ManagementViewProps> = ({
   handleUpdateRole,
   handleDeleteRole,
   handleUpdateDocumentType,
-  handleDeleteDocumentType
+  handleDeleteDocumentType,
+  aiScoreThreshold,
+  onUpdateThreshold,
+  thresholdLoading
 }) => {
   // Local state for editing WorkRoles
   const [editingRoleId, setEditingRoleId] = useState<number | string | null>(null);
@@ -45,6 +53,12 @@ const ManagementView: React.FC<ManagementViewProps> = ({
   // Local state for editing DocumentTypes
   const [editingDocTypeId, setEditingDocTypeId] = useState<number | string | null>(null);
   const [editingDocTypeName, setEditingDocTypeName] = useState("");
+  const [thresholdInput, setThresholdInput] = useState(String(aiScoreThreshold));
+
+  // Sync threshold input when prop changes
+  React.useEffect(() => {
+    setThresholdInput(String(aiScoreThreshold));
+  }, [aiScoreThreshold]);
 
   const startEditRole = (role: WorkRole) => {
     setEditingRoleId(role.id);
@@ -201,6 +215,58 @@ const ManagementView: React.FC<ManagementViewProps> = ({
         {/* Right Admin Listing & CRUD Column (60% width) */}
         <div className="xl:col-span-7 space-y-8">
           
+          {/* AI Score Threshold Configuration */}
+          {(user?.role === Role.SafaricomAdmin || user?.role === Role.SafaricomEHSOfficer) && (
+            <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
+              <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                    <Brain className="w-4.5 h-4.5 text-purple-600" />
+                    AI Hazard-Solution Threshold
+                  </h3>
+                  <p className="text-[10px] text-slate-400">
+                    Minimum AI rating required before a containment solution can be saved.
+                    Below this threshold, contractors must improve their solution.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4">
+                <div className="flex-1 space-y-1">
+                  <label htmlFor="ai-threshold" className="text-[11px] font-semibold text-slate-600">
+                    Threshold: <span className="text-purple-700 font-black">{thresholdInput}%</span>
+                  </label>
+                  <input
+                    id="ai-threshold"
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={thresholdInput}
+                    onChange={(e) => setThresholdInput(e.target.value)}
+                    className="w-full accent-purple-600 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[9px] text-slate-400">
+                    <span>0 (Disabled)</span>
+                    <span>50 (Default)</span>
+                    <span>100 (Strictest)</span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => onUpdateThreshold(Number(thresholdInput))}
+                  disabled={actionLoading || thresholdLoading}
+                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer shrink-0"
+                >
+                  {actionLoading ? "Saving..." : "Save"}
+                </button>
+              </div>
+
+              {thresholdLoading && (
+                <p className="text-[10px] text-slate-400 italic">Loading current threshold...</p>
+              )}
+            </div>
+          )}
+
           {/* List Section: Work/Job Roles with CRUD */}
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-sm p-6 space-y-4">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">

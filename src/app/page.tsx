@@ -44,6 +44,7 @@ export default function DashboardPage() {
     const [stats] = await Promise.all([
       fetchDashboardStatsData(userId ? String(userId) : undefined),
       fetchNotificationsData(),
+      appState.fetchContractorsData(),
     ]);
 
     if (stats) {

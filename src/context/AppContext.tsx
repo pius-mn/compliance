@@ -6,7 +6,6 @@ import { useAppStates } from "../hooks/useAppStates";
 import { useProjectActions } from "../hooks/useProjectActions";
 import { useDocumentActions } from "../hooks/useDocumentActions";
 import {
-  fetchReferenceData,
   fetchNotificationsData,
   refetchCollections,
   // Lazy fetchers
@@ -18,6 +17,12 @@ import {
   fetchSitePhotosData,
   fetchMilestonesData,
   fetchDashboardStatsData,
+  fetchContractorsData,
+  fetchUsersData,
+  fetchWorkRolesData,
+  fetchDocumentTypesData,
+  fetchPredefinedMilestonesData,
+  fetchPredefinedPrerequisitesData,
 } from "../utils/dataSync";
 
 import type { DashboardStatsResponse, CollectionKey, DataSyncStates } from "../utils/dataSync";
@@ -123,6 +128,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       fetchMilestonesData: () => fetchMilestonesData(ds, API_BASE),
       fetchDashboardStatsData: (userId?: string, contractorId?: string) =>
         fetchDashboardStatsData(API_BASE, userId, contractorId),
+      fetchContractorsData: () => fetchContractorsData(ds, API_BASE),
+      fetchUsersData: () => fetchUsersData(ds, API_BASE),
+      fetchWorkRolesData: () => fetchWorkRolesData(ds, API_BASE),
+      fetchDocumentTypesData: () => fetchDocumentTypesData(ds, API_BASE),
+      fetchPredefinedMilestonesData: () => fetchPredefinedMilestonesData(ds, API_BASE),
+      fetchPredefinedPrerequisitesData: () => fetchPredefinedPrerequisitesData(ds, API_BASE),
     }),
     [ds, API_BASE]
   );
@@ -180,7 +191,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     initialFetchRef.current = true;
 
     Promise.allSettled([
-      fetchReferenceData(ds, API_BASE),
       fetchNotificationsData(ds, API_BASE),
     ]).catch(console.error); // Prevent unhandled promise rejection
   }, [states.user, ds, API_BASE]);

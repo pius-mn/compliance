@@ -1,7 +1,9 @@
 import fs from "fs";
 import path from "path";
 
-const UPLOADS_DIR = path.join(process.cwd(), "public", "uploads", "documents");
+function getUploadsDir(): string {
+  return path.join(process.cwd(), "public", "uploads", "documents");
+}
 
 /**
  * Save a base64-encoded file to the filesystem and return its public URL path.
@@ -31,9 +33,9 @@ export function saveDocumentFile(
   // Determine directory
   let docDir: string;
   if (docId) {
-    docDir = path.join(UPLOADS_DIR, String(docId));
+    docDir = path.join(getUploadsDir(), String(docId));
   } else {
-    docDir = path.join(UPLOADS_DIR, "temp");
+    docDir = path.join(getUploadsDir(), "temp");
   }
 
   // Create directory if it doesn't exist
@@ -65,7 +67,7 @@ export function moveToFinalPath(
   const relativePath = tempPath.replace(/^\//, "");
   const absolutePath = path.join(process.cwd(), "public", relativePath);
 
-  const docDir = path.join(UPLOADS_DIR, String(docId));
+  const docDir = path.join(getUploadsDir(), String(docId));
   if (!fs.existsSync(docDir)) {
     fs.mkdirSync(docDir, { recursive: true });
   }

@@ -190,6 +190,36 @@ export async function count(table: string, where?: string, params: unknown[] = [
   return Number((rows[0] as Record<string, unknown>)?.cnt || 0);
 }
 
+// ─── Settings helpers ───────────────────────────────────────────────────────
+
+/**
+ * Get a setting value by key from the appSettings table.
+ * Returns null if the key doesn't exist.
+ */
+export async function getSetting(key: string): Promise<string | null> {
+  await ensureInitialized();
+  const rows = await query("SELECT settingValue FROM appSettings WHERE settingKey = ? LIMIT 1", [key]);
+  if (rows.length === 0) return null;
+  return (rows[0] as Record<string, unknown>).settingValue as string || null;
+}
+
+/**
+ * Set a setting value by key in the appSettings table (upsert).
+ */
+export async function setSetting(key: string, value: string): Promise<void> {
+  await ensureInitialized();
+  const now = new Date().toISOString();
+  const existing = await query(
+    "SELECT id FROM appSettings WHERE settingKey = ? LIMIT 1",
+    [key]
+  );
+  if (existing.length > 0) {
+    await updateWhere("appSettings", { settingValue: value, updatedAt: now }, "settingKey = ?", [key]);
+  } else {
+    await insert("appSettings", { settingKey: key, settingValue: value, updatedAt: now });
+  }
+}
+
 // ─── Transaction helper ─────────────────────────────────────────────────────
 
 /**

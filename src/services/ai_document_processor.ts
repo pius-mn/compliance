@@ -4,11 +4,27 @@
  */
 
 import { GoogleGenAI, Type } from "@google/genai";
+import { withTimeout, TtlCache, isRetryableError, getRetryDelay } from "../utils/aiUtils";
 
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || "dummy_key",
   httpOptions: { headers: { 'User-Agent': 'aistudio-build' } }
 });
+
+// ─── In-memory TTL cache ────────────────────────────────────────────────────
+// Avoids redundant Gemini calls when the same document is re-verified within
+// the TTL window (e.g. on retry or re-render).
+
+const cache = new TtlCache<EHSAnalysisResult>(5 * 60); // 5 minutes
+
+function getCacheKey(
+  documentText: string,
+  documentType: string,
+  fileBase64: string | undefined,
+  technicianName: string | undefined,
+): string {
+  return `${fileBase64 ? "FILE" : documentText.slice(0, 200)}::${documentType}::${technicianName || ""}`;
+}
 
 export interface EHSAnalysisResult {
   verifiedByAi: boolean;
@@ -25,6 +41,21 @@ export async function processEHSDocument(
   fileMimeType?: string,
   technicianName?: string
 ): Promise<EHSAnalysisResult> {
+  // ── Check cache first ──────────────────────────────────────────────────
+  const cacheKey = getCacheKey(documentText, documentType, fileBase64, technicianName);
+  const cached = cache.get(cacheKey);
+  if (cached) return cached;
+
+  // ── Skip analysis for empty / trivial content ──────────────────────────
+  if (!documentText?.trim() && !fileBase64) {
+    const skip: EHSAnalysisResult = {
+      verifiedByAi: false,
+      expiryDate: null,
+      failureReason: "No document content or file provided for AI analysis.",
+    };
+    return skip;
+  }
+
   const systemInstruction = `You are the Safaricom Safety and Compliance Auditor AI.
 Evaluate the provided Environmental Health & Safety (EHS) document.
 
@@ -54,27 +85,30 @@ Return verifiedByAi (boolean), expiryDate (string or null), and failureReason (s
   
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents,
-        config: {
-          systemInstruction,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            required: ["verifiedByAi"],
-            properties: {
-              verifiedByAi: { type: Type.BOOLEAN },
-              expiryDate: { type: Type.STRING },
-              failureReason: { type: Type.STRING }
+      const response = await withTimeout(
+        ai.models.generateContent({
+          model: "gemini-3.5-flash",
+          contents,
+          config: {
+            systemInstruction,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              required: ["verifiedByAi"],
+              properties: {
+                verifiedByAi: { type: Type.BOOLEAN },
+                expiryDate: { type: Type.STRING },
+                failureReason: { type: Type.STRING }
+              }
             }
           }
-        }
-      });
+        }),
+        20_000 // 20s timeout per attempt
+      );
 
-      if (!response?.text) throw new Error("Empty response from Gemini API");
+      if (!(response as { text?: string })?.text) throw new Error("Empty response from Gemini API");
       
-      const parsed = JSON.parse(response.text);
+      const parsed = JSON.parse((response as { text: string }).text);
       
       // Validate expiryDate — must be YYYY-MM-DD or null
       let expiryDate: string | null = parsed.expiryDate || null;
@@ -82,17 +116,21 @@ Return verifiedByAi (boolean), expiryDate (string or null), and failureReason (s
         expiryDate = null;
       }
       
-      return {
+      const result: EHSAnalysisResult = {
         verifiedByAi: Boolean(parsed.verifiedByAi),
         expiryDate,
         failureReason: parsed.failureReason || null
       };
+
+      // Cache the successful result
+      cache.set(cacheKey, result);
+      return result;
       
     } catch (error) {
-      const isRetryable = /503|UNAVAILABLE|high demand|capacity|overloaded/i.test((error as { message?: string })?.message || "");
+      const { retryable, isTimeout } = isRetryableError(error);
       
-      if (isRetryable && attempt < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, attempt * 1200));
+      if (retryable && attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, getRetryDelay(attempt)));
         continue;
       }
       
@@ -101,7 +139,9 @@ Return verifiedByAi (boolean), expiryDate (string or null), and failureReason (s
       return {
         verifiedByAi: false,
         expiryDate: null,
-        failureReason: "AI processor encountered an error during analysis."
+        failureReason: isTimeout
+          ? "AI analysis timed out. Please try again."
+          : "AI processor encountered an error during analysis."
       };
     }
   }
