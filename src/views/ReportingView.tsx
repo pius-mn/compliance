@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { 
   FileText, 
   Download, 
@@ -124,6 +124,21 @@ function getUrgencyMeta(remainingDays: number, isExpired: boolean): { badge: str
   };
 }
 
+/** Shared CSV download trigger — was duplicated verbatim (Blob → object URL →
+ * throwaway <a> → click → cleanup) across all five export handlers below. */
+function downloadCSV(filenamePrefix: string, csvContent: string): void {
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.setAttribute("href", url);
+  link.setAttribute("download", `${filenamePrefix}_${new Date().toISOString().slice(0, 10)}.csv`);
+  link.style.visibility = "hidden";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 /** Safely formats a date-ish value, falling back to the raw string then "Unknown". */
 function formatDateSafe(value: unknown): string {
   try {
@@ -180,7 +195,7 @@ function KpiCard({ value, swatchClasses, label, headline, sublabel, sublabelClas
         <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-wider block font-semibold">{label}</span>
         <span className="text-sm font-extrabold text-slate-800 dark:text-slate-100 truncate block">{headline}</span>
         {sublabel && (
-          <div className={sublabelClasses || "text-[10px] text-slate-400 dark:text-slate-500 mt-0.5"}>{sublabel}</div>
+          <div className={sublabelClasses || "text-[10px] text-slate-500 dark:text-slate-400 mt-0.5"}>{sublabel}</div>
         )}
       </div>
     </div>
@@ -202,6 +217,249 @@ function escapeCSV(val: unknown): string {
   }
   return str;
 }
+
+// --- Single compliance-flag card, memoized. The resolution-notes textarea's
+// draft text used to live in the parent (`resolutionInputText`), so every
+// keystroke re-rendered the entire paginated flag list (up to 10 cards,
+// each re-deriving its icon/severity styling). Localizing the draft text
+// inside the card itself means only the one open card re-renders. ---
+
+interface ComplianceFlagCardProps {
+  flag: ComplianceFlag;
+  isResolving: boolean;
+  onStartResolving: (flagId: number) => void;
+  onCancelResolving: () => void;
+  onSubmitResolution: (flagId: number, comments: string) => void;
+}
+
+const ComplianceFlagCard = React.memo(function ComplianceFlagCard({
+  flag,
+  isResolving,
+  onStartResolving,
+  onCancelResolving,
+  onSubmitResolution,
+}: ComplianceFlagCardProps) {
+  const [draftText, setDraftText] = useState("");
+  const { Icon: FlagIcon, color: iconColor } = getFlagIconMeta(flag.standard);
+  const severityBadge = getSeverityBadgeClasses(flag.severity);
+
+  return (
+    <div className="p-4 hover:bg-slate-50/40 dark:hover:bg-slate-800/40 transition">
+      <div className="flex items-start gap-3.5">
+        <div className={`p-2 bg-slate-100 dark:bg-slate-800 rounded-xl ${iconColor} mt-0.5 shadow-3xs border border-slate-200/50 dark:border-slate-700/50 shrink-0`}>
+          <FlagIcon className="w-5 h-5" />
+        </div>
+
+        <div className="flex-grow min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-extrabold text-slate-900 dark:text-slate-100 text-[13px]">{flag.ruleName}</span>
+            <span className={`px-2 py-0.5 rounded text-[10px] font-mono tracking-wider uppercase font-semibold ${severityBadge}`}>
+              {flag.severity}
+            </span>
+            <span className="text-[10px] font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded">
+              {flag.standard}
+            </span>
+            <span className="text-[10.5px] text-slate-500 dark:text-slate-400 sm:ml-auto font-medium">
+              Flagged: {formatDateSafe(flag.flaggedAt)}
+            </span>
+          </div>
+
+          <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium bg-slate-50/50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-100 dark:border-slate-800 mt-1">
+            {flag.description}
+          </p>
+
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1.5">
+            <div className="flex items-center gap-2 text-[10.5px] text-slate-500 dark:text-slate-400 font-bold">
+              <span className="uppercase tracking-wider text-[9px] text-slate-500 dark:text-slate-400 font-mono">Linked Entity:</span>
+              <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded capitalize font-mono text-[10px]">
+                {flag.targetType}
+              </span>
+              <span className="text-slate-800 dark:text-slate-200 font-bold italic">&quot;{flag.targetName}&quot;</span>
+            </div>
+
+            {flag.status === "Active" ? (
+              <div>
+                {isResolving ? (
+                  <div className="mt-3 bg-indigo-50/60 dark:bg-indigo-500/10 p-3 rounded-xl border border-indigo-100 dark:border-indigo-500/20 space-y-2.5 max-w-xl">
+                    <span className="text-[11px] font-extrabold text-indigo-900 dark:text-indigo-300 block uppercase tracking-wider font-mono">
+                      File Official Resolution Corrective Action
+                    </span>
+                    <textarea
+                      className="w-full text-xs p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:border-indigo-500 font-medium text-slate-900 dark:text-slate-100"
+                      rows={2}
+                      value={draftText}
+                      onChange={(e) => setDraftText(e.target.value)}
+                      placeholder="Please detail the corrective actions filed (e.g. Technician safety training program completed, valid NEMA certificate uploaded, or field safety equipment checked)..."
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={onCancelResolving}
+                        className="px-3 py-1 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-200 text-[11px] font-bold transition"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => {
+                          onSubmitResolution(flag.id, draftText);
+                          setDraftText("");
+                        }}
+                        disabled={!draftText.trim()}
+                        className="px-3.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold transition disabled:opacity-50"
+                      >
+                        Submit Compliance Audit Log
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => onStartResolving(flag.id)}
+                    className="px-3 py-1 bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 border border-indigo-150 dark:border-indigo-500/20 text-[10.5px] font-extrabold rounded-lg transition"
+                  >
+                    Resolve Warning Flag
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="mt-2 bg-emerald-50/70 dark:bg-emerald-500/10 p-3 rounded-xl border border-emerald-100 dark:border-emerald-500/20 w-full text-left">
+                <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-400 font-bold text-xs">
+                  <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                  <span>RESOLVED AUDIT SIGN-OFF</span>
+                </div>
+                {flag.resolvedAt && (
+                  <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 block font-semibold mt-0.5">
+                    Closed on: {formatDateSafe(flag.resolvedAt)}
+                  </span>
+                )}
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 italic font-medium">
+                  <strong>Correction Notes:</strong> {flag.resolutionComments || "Approved during regular safety cycle checks."}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+// --- Single expiring-document row, memoized. Marking one row "notified"
+// previously lived in parent state (`notifiedDocs`), so clicking the button
+// on any one row re-rendered and re-derived urgency styling for every row
+// in the table. ---
+
+interface ExpiringDocRowProps {
+  doc: TechnicianDocument & { remainingDays: number };
+  phone: string;
+  docBranch: string;
+  isNotified: boolean;
+  onNotify: (docId: number) => void;
+}
+
+const ExpiringDocRow = React.memo(function ExpiringDocRow({ doc, phone, docBranch, isNotified, onNotify }: ExpiringDocRowProps) {
+  const isExpired = doc.remainingDays < 0;
+  const { badge: urgencyBadge, label: urgencyLabel } = getUrgencyMeta(doc.remainingDays, isExpired);
+
+  return (
+    <tr className="hover:bg-slate-50/40 dark:hover:bg-slate-800/40 transition">
+      <td className="p-3.5 pl-5">
+        <div className="font-extrabold text-slate-900 dark:text-slate-100">{doc.technicianName}</div>
+        <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">{phone || "+254 No Phone"}</div>
+      </td>
+      <td className="p-3.5 font-bold text-slate-600 dark:text-slate-300">{docBranch}</td>
+      <td className="p-3.5">
+        <div className="font-bold text-slate-800 dark:text-slate-200">{doc.type}</div>
+        <div className="text-[10px] font-mono text-slate-500 dark:text-slate-400 truncate max-w-sm mt-0.5">{doc.fileName}</div>
+      </td>
+      <td className="p-3.5 font-bold font-mono text-slate-700 dark:text-slate-300">{doc.expiryDate}</td>
+      <td className="p-3.5">
+        {isExpired ? (
+          <span className="text-red-700 dark:text-red-400 font-extrabold flex items-center gap-1 text-[11px]">
+            <AlertTriangle className="w-3.5 h-3.5" /> Expired {Math.abs(doc.remainingDays)}d ago
+          </span>
+        ) : (
+          <span className="text-slate-800 dark:text-slate-200 font-extrabold pl-0.5 text-[11px]">
+            {doc.remainingDays} days remaining
+          </span>
+        )}
+      </td>
+      <td className="p-3.5 text-center">
+        <span className={`inline-block px-2.5 py-1 rounded-full text-[9px] uppercase tracking-wider font-extrabold ${urgencyBadge}`}>
+          {urgencyLabel}
+        </span>
+      </td>
+      <td className="p-3.5 pr-5 text-right">
+        {isNotified ? (
+          <span className="inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-extrabold border border-emerald-150 dark:border-emerald-500/20 px-2.5 py-1 rounded-lg text-[10px] shadow-3xs">
+            <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Alert Dispatched
+          </span>
+        ) : (
+          <button
+            onClick={() => onNotify(doc.id)}
+            className={`px-3 py-1 bg-indigo-50 dark:bg-indigo-500/10 hover:bg-[#E61C24]/10 hover:text-[#E61C24] dark:hover:text-red-400 hover:border-[#E61C24]/50 border border-indigo-150 dark:border-indigo-500/20 text-indigo-700 dark:text-indigo-400 text-[10px] font-extrabold rounded-lg transition shadow-3xs flex items-center gap-1.5 ml-auto ${
+              isExpired ? "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/20 hover:bg-red-100 dark:hover:bg-red-500/20" : ""
+            }`}
+          >
+            Send SLA Alert
+          </button>
+        )}
+      </td>
+    </tr>
+  );
+});
+
+// --- Single site-clearance ledger row, memoized for the same reason as the
+// rows above — keeps this table inert when unrelated filter/panel state
+// elsewhere in the view changes. ---
+
+interface SiteClearanceRowProps {
+  project: Project;
+  partnerName: string;
+  leadName: string;
+  ehsOfficer: string;
+  currentMilestoneTitle: string;
+  currentMilestoneStatus: string | null;
+  averageScore: number;
+  crewCount: number;
+}
+
+const SiteClearanceRow = React.memo(function SiteClearanceRow({
+  project,
+  partnerName,
+  leadName,
+  ehsOfficer,
+  currentMilestoneTitle,
+  currentMilestoneStatus,
+  averageScore,
+  crewCount,
+}: SiteClearanceRowProps) {
+  return (
+    <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition">
+      <td className="p-4 font-semibold text-slate-900 dark:text-slate-100">
+        <div className="truncate max-w-sm">{project.name}</div>
+        <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">{project.startDate} to {project.endDate}</div>
+      </td>
+      <td className="p-4 font-medium text-slate-600 dark:text-slate-300">{partnerName}</td>
+      <td className="p-4">
+        <div className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[180px]" title={currentMilestoneTitle}>{currentMilestoneTitle}</div>
+        {currentMilestoneStatus && (
+          <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase ${getMilestoneBadgeClasses(currentMilestoneStatus)}`}>
+            {currentMilestoneStatus}
+          </span>
+        )}
+      </td>
+      <td className="p-4 text-slate-500 dark:text-slate-400">{leadName}</td>
+      <td className="p-4 text-slate-500 dark:text-slate-400">{ehsOfficer}</td>
+      <td className="p-4 text-center">
+        <div className="flex items-center justify-center gap-1">
+          <span className={`text-[11px] font-bold ${averageScore >= 80 ? "text-emerald-600 dark:text-emerald-400" : averageScore >= 70 ? "text-amber-500 dark:text-amber-400" : "text-red-500 dark:text-red-400"}`}>
+            {averageScore}%
+          </span>
+          <span className="text-[10px] text-slate-500 dark:text-slate-400 font-normal whitespace-nowrap">avg ({crewCount} crew)</span>
+        </div>
+      </td>
+    </tr>
+  );
+});
 
 const ReportingView: React.FC<ReportingViewProps> = ({
   projects,
@@ -227,7 +485,6 @@ const ReportingView: React.FC<ReportingViewProps> = ({
   const [compFlagsPage, setCompFlagsPage] = useState(1);
   const COMP_FLAGS_PER_PAGE = 10;
   const [resolvingFlagId, setResolvingFlagId] = useState<number | null>(null);
-  const [resolutionInputText, setResolutionInputText] = useState<string>("");
 
   // Document Expiration Predictor States
   const [expirationDays, setExpirationDays] = useState<string>("30");
@@ -244,6 +501,25 @@ const ReportingView: React.FC<ReportingViewProps> = ({
     setSelectedBranchId("all");
     setSelectedProjectId("all");
   };
+
+  // Compliance flag resolution flow — stable callbacks so ComplianceFlagCard's
+  // React.memo actually skips re-rendering cards that aren't being edited.
+  const handleStartResolving = useCallback((flagId: number) => {
+    setResolvingFlagId(flagId);
+  }, []);
+  const handleCancelResolving = useCallback(() => {
+    setResolvingFlagId(null);
+  }, []);
+  const handleSubmitResolution = useCallback((flagId: number, comments: string) => {
+    if (onResolveFlag) {
+      onResolveFlag(flagId, comments);
+      setResolvingFlagId(null);
+    }
+  }, [onResolveFlag]);
+
+  const handleNotifyDoc = useCallback((docId: number) => {
+    setNotifiedDocs(prev => ({ ...prev, [docId]: true }));
+  }, []);
 
   // Contractor isolation security constraints (Contractor Managers / Contractor Safety Leads can only view their own contractor)
   const isCentral = currentUser?.isCentral ?? true;
@@ -330,9 +606,12 @@ const ReportingView: React.FC<ReportingViewProps> = ({
   }, [complianceStandardFilter, complianceSeverityFilter, complianceStatusFilter, activeContractorId]);
 
   // Paginate filtered flags
-  const paginatedFlags = filteredFlags.slice(
-    (compFlagsPage - 1) * COMP_FLAGS_PER_PAGE,
-    compFlagsPage * COMP_FLAGS_PER_PAGE
+  const paginatedFlags = useMemo(
+    () => filteredFlags.slice(
+      (compFlagsPage - 1) * COMP_FLAGS_PER_PAGE,
+      compFlagsPage * COMP_FLAGS_PER_PAGE
+    ),
+    [filteredFlags, compFlagsPage]
   );
 
   // Memoized unresolved high-risk compliance flags
@@ -581,16 +860,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       ].join(","))
     ];
 
-    const csvContent = csvRows.join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `safaricom_compliance_report_${new Date().toISOString().slice(0, 10)}.csv`);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCSV("safaricom_compliance_report", csvRows.join("\n"));
   };
 
   // Safe Export to CSV handler for expiring documents report
@@ -626,16 +896,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       }),
     ];
 
-    const csvContent = csvRows.join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `document_expiration_report_${new Date().toISOString().slice(0, 10)}.csv`);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCSV("document_expiration_report", csvRows.join("\n"));
   };
 
   // Safe Export to CSV handler for site clearance ledger
@@ -691,16 +952,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       }),
     ];
 
-    const csvContent = csvRows.join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `site_clearance_ledger_${new Date().toISOString().slice(0, 10)}.csv`);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCSV("site_clearance_ledger", csvRows.join("\n"));
   };
 
   // Safe Export to CSV handler for KPI grid data
@@ -720,16 +972,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       ...stats.partnerStats.map(p => [p.name, `${p.score}%`, String(p.techCount)]),
     ];
 
-    const csvContent = rows.map(r => r.join(",")).join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `kpi_metrics_${new Date().toISOString().slice(0, 10)}.csv`);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCSV("kpi_metrics", rows.map(r => r.join(",")).join("\n"));
   };
 
   // Safe Export to CSV handler for chart data
@@ -759,16 +1002,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       ...docRows.map(r => r.join(",")),
     ];
 
-    const csvContent = csvRows.join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `charts_data_${new Date().toISOString().slice(0, 10)}.csv`);
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    downloadCSV("charts_data", csvRows.join("\n"));
   };
 
   // Safe Print to PDF handler for high-risk unresolved flags
@@ -1165,11 +1399,11 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-3xs">
         <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-150 dark:border-slate-800">
           <div className="flex items-center gap-1.5 font-bold text-slate-800 dark:text-slate-100 text-xs uppercase tracking-wider">
-            <SlidersHorizontal className="w-4 h-4 text-[#E61C24]" /> Filter Parameters
+            <SlidersHorizontal className="w-4 h-4 text-[#E61C24] dark:text-red-400" /> Filter Parameters
           </div>
           <button
             onClick={handleResetFilters}
-            className="text-[10px] text-slate-500 dark:text-slate-400 hover:text-[#E61C24] font-semibold flex items-center gap-1 transition"
+            className="text-[10px] text-slate-500 dark:text-slate-400 hover:text-[#E61C24] dark:hover:text-red-400 font-semibold flex items-center gap-1 transition"
           >
             <RefreshCw className="w-3 h-3" /> Reset Filter Settings
           </button>
@@ -1213,14 +1447,14 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 sm:gap-6">
         <KpiCard
           value={`${stats.avgScore}%`}
-          swatchClasses="bg-emerald-50 text-emerald-600 border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20"
+          swatchClasses="bg-emerald-50 text-emerald-700 border-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:border-emerald-500/20"
           label="Compliance Index"
           headline={stats.avgScore >= 85 ? "Optimum (Gold)" : stats.avgScore >= 75 ? "Robust" : "Pre-Critical Warning"}
           sublabel={<span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold"><TrendingUp className="w-3 h-3" /> Tested field crew</span>}
         />
         <KpiCard
           value={`${stats.approvalRate}%`}
-          swatchClasses="bg-indigo-50 text-indigo-600 border-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/20"
+          swatchClasses="bg-indigo-50 text-indigo-700 border-indigo-100 dark:bg-indigo-500/10 dark:text-indigo-400 dark:border-indigo-500/20"
           label="Audit Approval Success"
           headline={`${stats.totalDocs} uploaded cert files`}
           sublabel="Approved compliance submissions"
@@ -1228,15 +1462,15 @@ const ReportingView: React.FC<ReportingViewProps> = ({
         <KpiCard
           value={stats.issueCount}
           swatchClasses={stats.issueCount > 0
-            ? "bg-amber-50 text-amber-600 border-amber-100 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20"
-            : "bg-slate-50 text-slate-400 border-slate-100 dark:bg-slate-800 dark:text-slate-500 dark:border-slate-700"}
+            ? "bg-amber-50 text-amber-700 border-amber-100 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20"
+            : "bg-slate-50 text-slate-500 border-slate-100 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700"}
           label="Active Hazard Flags"
           headline={stats.issueCount > 0 ? "Hazards Flagged" : "Zero Issues Flagged"}
           sublabel="Extracted by intelligent review"
         />
         <KpiCard
           value={filteredProjects.length}
-          swatchClasses="bg-rose-50 text-[#E61C24] border-rose-100 dark:bg-rose-500/10 dark:border-rose-500/20"
+          swatchClasses="bg-rose-50 text-[#E61C24] border-rose-100 dark:bg-rose-500/10 dark:text-red-400 dark:border-rose-500/20"
           label="Contractor Projects"
           headline="Under Active Oversight"
           sublabel="Audited regional tower hubs"
@@ -1248,7 +1482,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
               <span className="text-[8px] font-bold text-sky-500 dark:text-sky-400 uppercase mt-0.5">km</span>
             </span>
           }
-          swatchClasses="bg-sky-50 text-sky-600 border-sky-100 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/20"
+          swatchClasses="bg-sky-50 text-sky-700 border-sky-100 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/20"
           label="Total Rollout"
           headline="In Fibre Kilometers"
           sublabel="Aggregated fibre distance"
@@ -1259,12 +1493,12 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       {aiReportOutput && (
         <div className="bg-rose-50/70 dark:bg-rose-500/10 border border-rose-150 dark:border-rose-500/20 rounded-xl p-4 sm:p-5 shadow-3xs animate-fade-in text-slate-800 dark:text-slate-200 text-xs">
           <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-1.5 font-bold text-[#E61C24] uppercase tracking-wider">
-              <Sparkles className="w-4 h-4 text-[#E61C24] fill-rose-200 dark:fill-rose-500/20" /> Compiled Executive Summary Findings
+            <div className="flex items-center gap-1.5 font-bold text-[#E61C24] dark:text-red-400 uppercase tracking-wider">
+              <Sparkles className="w-4 h-4 text-[#E61C24] dark:text-red-400 fill-rose-200 dark:fill-rose-500/20" /> Compiled Executive Summary Findings
             </div>
             <button
               onClick={() => setAiReportOutput(null)}
-              className="text-[10px] hover:text-[#E61C24] text-slate-500 dark:text-slate-400 font-bold"
+              className="text-[10px] hover:text-[#E61C24] dark:hover:text-red-400 text-slate-500 dark:text-slate-400 font-bold"
             >
               ✕ Hide Report Panel
             </button>
@@ -1275,7 +1509,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 return <h3 key={i} className="text-sm font-extrabold text-slate-900 dark:text-slate-100 border-b border-slate-100 dark:border-slate-800 pb-1.5 mt-2 uppercase tracking-wide">{line.replace("### ", "")}</h3>;
               }
               if (line.startsWith("#### ")) {
-                return <h4 key={i} className="text-xs font-bold text-slate-850 dark:text-slate-200 mt-3 flex items-center gap-1">{line.replace("#### ", "")}</h4>;
+                return <h4 key={i} className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-3 flex items-center gap-1">{line.replace("#### ", "")}</h4>;
               }
               if (line.startsWith("- ")) {
                 return <p key={i} className="pl-4 border-l-2 border-red-500/30 my-1">{line.replace("- ", "")}</p>;
@@ -1340,7 +1574,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 text-[11px] italic">
+              <div className="h-full flex flex-col items-center justify-center text-slate-500 dark:text-slate-400 text-[11px] italic">
                 No project score data available under current filter variables.
               </div>
             )}
@@ -1384,14 +1618,14 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                   </PieChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-400 dark:text-slate-500 text-[11px] italic">
+                <div className="h-full flex flex-col items-center justify-center text-slate-500 dark:text-slate-400 text-[11px] italic">
                   No certificate document statistics available.
                 </div>
               )}
             </div>
 
             <div className="col-span-1 md:col-span-5 space-y-2">
-              <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-widest block font-mono">Legend Breakdown</span>
+              <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest block font-mono">Legend Breakdown</span>
               {documentStatusPieData.map((item) => (
                 <div key={item.name} className="flex items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
                   <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
@@ -1400,7 +1634,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 </div>
               ))}
               {documentStatusPieData.length === 0 && (
-                <div className="text-[10px] text-slate-400 dark:text-slate-500 italic">No submissions file queue logged representing active partner filters.</div>
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 italic">No submissions file queue logged representing active partner filters.</div>
               )}
             </div>
           </div>
@@ -1422,7 +1656,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
               </span>
             </div>
             <h3 className="font-extrabold text-sm text-slate-900 dark:text-slate-100 uppercase mt-1 flex items-center gap-1.5">
-              <Shield className="w-5 h-5 text-[#E61C24]" /> Automated Policy & Regulatory Audit
+              <Shield className="w-5 h-5 text-[#E61C24] dark:text-red-400" /> Automated Policy & Regulatory Audit
             </h3>
             <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
               Periodic scanning engine mapping active operations against OSHA crew standards, NEMA/EPA environmental clearances, and Safaricom safety validation SLAs.
@@ -1464,7 +1698,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
         <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-800/10 grid grid-cols-1 lg:grid-cols-12 gap-3 items-center">
           {/* Standard selector */}
           <div className="lg:col-span-5 flex items-center gap-1 overflow-x-auto pb-1 lg:pb-0 scrollbar-none">
-            <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 pr-1 shrink-0 font-mono">Standard:</span>
+            <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 pr-1 shrink-0 font-mono">Standard:</span>
             {["all", "OSHA", "EPA", "Regulatory", "Safaricom Internal"].map((std) => (
               <button
                 key={std}
@@ -1482,7 +1716,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
           {/* Severity Selector */}
           <div className="lg:col-span-4 flex items-center gap-1.5">
-            <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono shrink-0">Severity:</span>
+            <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 font-mono shrink-0">Severity:</span>
             <select
               value={complianceSeverityFilter}
               onChange={(e) => setComplianceSeverityFilter(e.target.value)}
@@ -1527,114 +1761,16 @@ const ReportingView: React.FC<ReportingViewProps> = ({
         </div>
 
         <div className="divide-y divide-slate-150 dark:divide-slate-800 flex-1 overflow-y-auto min-h-0">
-          {paginatedFlags.map((flag) => {
-            const { Icon: FlagIcon, color: iconColor } = getFlagIconMeta(flag.standard);
-            const severityBadge = getSeverityBadgeClasses(flag.severity);
-
-            return (
-              <div key={flag.id} className="p-4 hover:bg-slate-50/40 dark:hover:bg-slate-800/40 transition">
-                <div className="flex items-start gap-3.5">
-                  <div className={`p-2 bg-slate-100 dark:bg-slate-800 rounded-xl ${iconColor} mt-0.5 shadow-3xs border border-slate-200/50 dark:border-slate-700/50 shrink-0`}>
-                    <FlagIcon className="w-5 h-5" />
-                  </div>
-
-                  <div className="flex-grow min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-extrabold text-slate-900 dark:text-slate-100 text-[13px]">{flag.ruleName}</span>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono tracking-wider uppercase font-semibold ${severityBadge}`}>
-                        {flag.severity}
-                      </span>
-                      <span className="text-[10px] font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded">
-                        {flag.standard}
-                      </span>
-                      <span className="text-[10.5px] text-slate-400 dark:text-slate-500 sm:ml-auto font-medium">
-                        Flagged: {formatDateSafe(flag.flaggedAt)}
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed font-medium bg-slate-50/50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-100 dark:border-slate-800 mt-1">
-                      {flag.description}
-                    </p>
-
-                    <div className="flex flex-wrap items-center justify-between gap-2.5 pt-1.5">
-                      <div className="flex items-center gap-2 text-[10.5px] text-slate-500 dark:text-slate-400 font-bold">
-                        <span className="uppercase tracking-wider text-[9px] text-slate-400 dark:text-slate-500 font-mono">Linked Entity:</span>
-                        <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded capitalize font-mono text-[10px]">
-                          {flag.targetType}
-                        </span>
-                        <span className="text-slate-800 dark:text-slate-200 font-bold italic">&quot;{flag.targetName}&quot;</span>
-                      </div>
-
-                      {flag.status === "Active" ? (
-                        <div>
-                          {resolvingFlagId === flag.id ? (
-                            <div className="mt-3 bg-indigo-50/60 dark:bg-indigo-500/10 p-3 rounded-xl border border-indigo-100 dark:border-indigo-500/20 space-y-2.5 max-w-xl">
-                              <span className="text-[11px] font-extrabold text-indigo-900 dark:text-indigo-300 block uppercase tracking-wider font-mono">
-                                File Official Resolution Corrective Action
-                              </span>
-                              <textarea
-                                className="w-full text-xs p-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none focus:border-indigo-500 font-medium text-slate-900 dark:text-slate-100"
-                                rows={2}
-                                value={resolutionInputText}
-                                onChange={(e) => setResolutionInputText(e.target.value)}
-                                placeholder="Please detail the corrective actions filed (e.g. Technician safety training program completed, valid NEMA certificate uploaded, or field safety equipment checked)..."
-                              />
-                              <div className="flex justify-end gap-2">
-                                <button
-                                  onClick={() => setResolvingFlagId(null)}
-                                  className="px-3 py-1 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-200 text-[11px] font-bold transition"
-                                >
-                                  Cancel
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    if (onResolveFlag) {
-                                      onResolveFlag(flag.id, resolutionInputText);
-                                      setResolvingFlagId(null);
-                                      setResolutionInputText("");
-                                    }
-                                  }}
-                                  disabled={!resolutionInputText.trim()}
-                                  className="px-3.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-[11px] font-bold transition disabled:opacity-50"
-                                >
-                                  Submit Compliance Audit Log
-                                </button>
-                              </div>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => {
-                                setResolvingFlagId(flag.id);
-                                setResolutionInputText("");
-                              }}
-                              className="px-3 py-1 bg-indigo-50 dark:bg-indigo-500/10 hover:bg-indigo-100 dark:hover:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 border border-indigo-150 dark:border-indigo-500/20 text-[10.5px] font-extrabold rounded-lg transition"
-                            >
-                              Resolve Warning Flag
-                            </button>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="mt-2 bg-emerald-50/70 dark:bg-emerald-500/10 p-3 rounded-xl border border-emerald-100 dark:border-emerald-500/20 w-full text-left">
-                          <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-400 font-bold text-xs">
-                            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-                            <span>RESOLVED AUDIT SIGN-OFF</span>
-                          </div>
-                          {flag.resolvedAt && (
-                            <span className="text-[10px] text-emerald-600/80 dark:text-emerald-400/80 block font-semibold mt-0.5">
-                              Closed on: {formatDateSafe(flag.resolvedAt)}
-                            </span>
-                          )}
-                          <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 italic font-medium">
-                            <strong>Correction Notes:</strong> {flag.resolutionComments || "Approved during regular safety cycle checks."}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {paginatedFlags.map((flag) => (
+            <ComplianceFlagCard
+              key={flag.id}
+              flag={flag}
+              isResolving={resolvingFlagId === flag.id}
+              onStartResolving={handleStartResolving}
+              onCancelResolving={handleCancelResolving}
+              onSubmitResolution={handleSubmitResolution}
+            />
+          ))}
 
           {paginatedFlags.length === 0 && (
             <div className="p-12 text-center text-slate-500 dark:text-slate-400 text-xs flex flex-col items-center justify-center space-y-3">
@@ -1643,7 +1779,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 <p className="font-extrabold text-slate-800 dark:text-slate-100 uppercase tracking-wider text-sm">
                   No Policy Breaches Detected
                 </p>
-                <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-1 max-w-sm mx-auto">
+                <p className="text-slate-500 dark:text-slate-400 text-[11px] mt-1 max-w-sm mx-auto">
                   Excellent! All currently monitored active projects and documentations have completely passed OSHA & NEMA compliance audits under specified filters.
                 </p>
               </div>
@@ -1665,13 +1801,13 @@ const ReportingView: React.FC<ReportingViewProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 text-[9px] font-extrabold bg-[#E61C24]/10 text-[#E61C24] rounded border border-[#E61C24]/20 uppercase tracking-widest font-mono">
+                <span className="px-2 py-0.5 text-[9px] font-extrabold bg-[#E61C24]/10 text-[#E61C24] dark:text-red-400 rounded border border-[#E61C24]/20 uppercase tracking-widest font-mono">
                   Predictive SLA Watch
                 </span>
-                <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">Reference Date: {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">Reference Date: {new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}</span>
               </div>
               <h3 className="font-extrabold text-sm text-slate-900 dark:text-slate-100 uppercase flex items-center gap-1.5">
-                <Clock className="w-5 h-5 text-[#E61C24]" /> Document Expiration Forecasting Report
+                <Clock className="w-5 h-5 text-[#E61C24] dark:text-red-400" /> Document Expiration Forecasting Report
               </h3>
               <p className="text-[10.5px] text-slate-500 dark:text-slate-400 max-w-2xl leading-relaxed">
                 Dynamically audit active technician certificates and credentials. Filter or input a customized day-count window to capture impending expirations and prevent unauthorized field work.
@@ -1691,7 +1827,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
         <div className="p-4 border-b border-slate-100 dark:border-slate-800 bg-slate-50/20 dark:bg-slate-800/10 grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
           {/* Dynamic Days Range Selector */}
           <div className="lg:col-span-5 space-y-1">
-            <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono block">Forecast Threshold (Days):</label>
+            <label className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 font-mono block">Forecast Threshold (Days):</label>
             <div className="flex flex-wrap items-center gap-2">
               <input
                 type="text"
@@ -1730,7 +1866,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
           {/* Status Filter Toggles (Expired Only vs Impending) */}
           <div className="lg:col-span-4 space-y-1">
-            <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono block">Auditing State Filter:</label>
+            <label className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 font-mono block">Auditing State Filter:</label>
             <div className="flex gap-2">
               <button
                 onClick={() => setExpiredOnlyFilter(false)}
@@ -1757,7 +1893,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
           {/* Regional isolation option */}
           <div className="lg:col-span-3 space-y-1">
-            <label className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono block">Hub Region presence:</label>
+            <label className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 font-mono block">Hub Region presence:</label>
             {isCentral ? (
               <select
                 value={expirationBranchFilter}
@@ -1796,56 +1932,16 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 {expiringDocsReport.map((doc) => {
                   const docBranch = contractors.find(b => b.id === doc.contractorId)?.name || "N/A";
                   const techProfile = technicians.find(t => t.id === doc.technicianId);
-                  const isExpired = doc.remainingDays < 0;
-                  const { badge: urgencyBadge, label: urgencyLabel } = getUrgencyMeta(doc.remainingDays, isExpired);
 
                   return (
-                    <tr key={doc.id} className="hover:bg-slate-50/40 dark:hover:bg-slate-800/40 transition">
-                      <td className="p-3.5 pl-5">
-                        <div className="font-extrabold text-slate-900 dark:text-slate-100">{doc.technicianName}</div>
-                        <div className="text-[10px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{techProfile?.phone || "+254 No Phone"}</div>
-                      </td>
-                      <td className="p-3.5 font-bold text-slate-600 dark:text-slate-300">{docBranch}</td>
-                      <td className="p-3.5">
-                        <div className="font-bold text-slate-800 dark:text-slate-200">{doc.type}</div>
-                        <div className="text-[10px] font-mono text-slate-400 dark:text-slate-500 truncate max-w-sm mt-0.5">{doc.fileName}</div>
-                      </td>
-                      <td className="p-3.5 font-bold font-mono text-slate-700 dark:text-slate-300">{doc.expiryDate}</td>
-                      <td className="p-3.5">
-                        {isExpired ? (
-                          <span className="text-red-700 dark:text-red-400 font-extrabold flex items-center gap-1 text-[11px]">
-                            <AlertTriangle className="w-3.5 h-3.5" /> Expired {Math.abs(doc.remainingDays)}d ago
-                          </span>
-                        ) : (
-                          <span className="text-slate-800 dark:text-slate-200 font-extrabold pl-0.5 text-[11px]">
-                            {doc.remainingDays} days remaining
-                          </span>
-                        )}
-                      </td>
-                      <td className="p-3.5 text-center">
-                        <span className={`inline-block px-2.5 py-1 rounded-full text-[9px] uppercase tracking-wider font-extrabold ${urgencyBadge}`}>
-                          {urgencyLabel}
-                        </span>
-                      </td>
-                      <td className="p-3.5 pr-5 text-right">
-                        {notifiedDocs[doc.id] ? (
-                          <span className="inline-flex items-center gap-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-extrabold border border-emerald-150 dark:border-emerald-500/20 px-2.5 py-1 rounded-lg text-[10px] shadow-3xs">
-                            <CheckCircle className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Alert Dispatched
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => {
-                              setNotifiedDocs(prev => ({ ...prev, [doc.id]: true }));
-                            }}
-                            className={`px-3 py-1 bg-indigo-50 dark:bg-indigo-500/10 hover:bg-[#E61C24]/10 hover:text-[#E61C24] hover:border-[#E61C24]/50 border border-indigo-150 dark:border-indigo-500/20 text-indigo-700 dark:text-indigo-400 text-[10px] font-extrabold rounded-lg transition shadow-3xs flex items-center gap-1.5 ml-auto ${
-                              isExpired ? "bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/20 hover:bg-red-100 dark:hover:bg-red-500/20" : ""
-                            }`}
-                          >
-                            Send SLA Alert
-                          </button>
-                        )}
-                      </td>
-                    </tr>
+                    <ExpiringDocRow
+                      key={doc.id}
+                      doc={doc}
+                      phone={techProfile?.phone || ""}
+                      docBranch={docBranch}
+                      isNotified={!!notifiedDocs[doc.id]}
+                      onNotify={handleNotifyDoc}
+                    />
                   );
                 })}
               </tbody>
@@ -1857,7 +1953,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 <p className="font-extrabold text-slate-800 dark:text-slate-100 uppercase tracking-widest text-xs font-mono">
                   Safe Expiration State
                 </p>
-                <p className="text-slate-400 dark:text-slate-500 text-xs font-medium max-w-md mx-auto">
+                <p className="text-slate-500 dark:text-slate-400 text-xs font-medium max-w-md mx-auto">
                   No active credentials expire within {expiredOnlyFilter ? "the selected past window" : `${expirationDays || "0"} days`}. Regional field safety compliance is secure!
                 </p>
               </div>
@@ -1868,7 +1964,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
       {/* Official Project Clearance and safety Gate Audit table */}
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-3xs">
-        <div className="p-4 bg-slate-550 dark:bg-slate-800/30 border-b border-slate-150 dark:border-slate-800 flex items-center justify-between gap-3">
+        <div className="p-4 bg-slate-50 dark:bg-slate-800/30 border-b border-slate-150 dark:border-slate-800 flex items-center justify-between gap-3">
           <div>
             <h3 className="font-extrabold text-xs text-slate-900 dark:text-slate-100 uppercase">Subcontractor Site Clearance Ledger</h3>
             <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Visual representation of real-time project risk thresholds and crew compliance rates.</p>
@@ -1881,7 +1977,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
             >
               <Download className="w-3 h-3" /> Export CSV
             </button>
-            <span className="text-[9px] uppercase font-bold text-slate-400 dark:text-slate-500 font-mono bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-full shrink-0">
+            <span className="text-[9px] uppercase font-bold text-slate-500 dark:text-slate-400 font-mono bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-2 py-0.5 rounded-full shrink-0">
               Records: {filteredProjects.length}
             </span>
           </div>
@@ -1923,36 +2019,22 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                 const currentMilestoneTitle = currentMilestone ? currentMilestone.title : "Not Started";
 
                 return (
-                  <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition">
-                    <td className="p-4 font-semibold text-slate-900 dark:text-slate-100">
-                      <div className="truncate max-w-sm">{p.name}</div>
-                      <div className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">{p.startDate} to {p.endDate}</div>
-                    </td>
-                    <td className="p-4 font-medium text-slate-600 dark:text-slate-300">{partnerName}</td>
-                    <td className="p-4">
-                      <div className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[180px]" title={currentMilestoneTitle}>{currentMilestoneTitle}</div>
-                      {currentMilestone && (
-                        <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase ${getMilestoneBadgeClasses(currentMilestone.status)}`}>
-                          {currentMilestone.status}
-                        </span>
-                      )}
-                    </td>
-                    <td className="p-4 text-slate-500 dark:text-slate-400">{leadName}</td>
-                    <td className="p-4 text-slate-500 dark:text-slate-400">{ehsOfficer}</td>
-                    <td className="p-4 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <span className={`text-[11px] font-bold ${averageScore >= 80 ? "text-emerald-600 dark:text-emerald-400" : averageScore >= 70 ? "text-amber-500 dark:text-amber-400" : "text-red-500 dark:text-red-400"}`}>
-                          {averageScore}%
-                        </span>
-                        <span className="text-[10px] text-slate-400 dark:text-slate-500 font-normal whitespace-nowrap">avg ({matchedTechs.length} crew)</span>
-                      </div>
-                    </td>
-                  </tr>
+                  <SiteClearanceRow
+                    key={p.id}
+                    project={p}
+                    partnerName={partnerName}
+                    leadName={leadName}
+                    ehsOfficer={ehsOfficer}
+                    currentMilestoneTitle={currentMilestoneTitle}
+                    currentMilestoneStatus={currentMilestone ? currentMilestone.status : null}
+                    averageScore={averageScore}
+                    crewCount={matchedTechs.length}
+                  />
                 );
               })}
               {filteredProjects.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="bg-slate-50/50 dark:bg-slate-800/20 p-12 text-center text-slate-400 dark:text-slate-500 text-xs italic">
+                  <td colSpan={6} className="bg-slate-50/50 dark:bg-slate-800/20 p-12 text-center text-slate-500 dark:text-slate-400 text-xs italic">
                     There are no recorded project scopes matching the compliance metrics.
                   </td>
                 </tr>
