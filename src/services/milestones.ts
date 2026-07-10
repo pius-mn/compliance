@@ -1,28 +1,8 @@
 import { Milestone, User } from "../types";
 import { getAll, getById, getWhere, insert, update } from "../lib";
+import { PREDEFINED_MILESTONES, PREDEFINED_PREREQUISITES } from "../lib/constants";
 
-export const PREDEFINED_MILESTONES = [
-  "High-Level Design & Feasibility",
-  "Site Survey & Route Validation",
-  "Permitting & Right of Way (RoW)",
-  "Detailed Low-Level Design (LLD)",
-  "Procurement of Materials",
-  "Civil Works & Trenching",
-  "Duct & Pole Installation",
-  "Fiber Cable Deployment",
-  "Splicing & Termination",
-  "Testing & Commissioning (OTDR)",
-  "Active Equipment Installation",
-  "Ready for Service (RFS) Handover"
-];
-
-export const PREDEFINED_PREREQUISITES = [
-  "Rollout Distance Approval",
-  "Way Leave Clearance",
-  "Site Access Permission",
-  "Permits & Regulatory Approval",
-  "Material Procurement Lead Time"
-];
+export { PREDEFINED_MILESTONES, PREDEFINED_PREREQUISITES };
 
 export async function getMilestones(): Promise<Milestone[]> {
   return await getAll<Milestone>("milestones");
@@ -94,10 +74,9 @@ export async function createProjectMilestone(
 
   // Update project milestones count
   const allMilestones = await getWhere<Milestone>("milestones", "projectId = ?", [projectId]);
-  const total = allMilestones.length;
   const completed = allMilestones.filter(m => m.status === "Completed").length;
   await update("projects", projectId, {
-    milestonesCount: { total, completed }
+    milestonesCount: { total: allMilestones.length, completed }
   });
 
   await insert("auditLogs", {
@@ -196,6 +175,8 @@ export async function updateMilestone(
   }
 
   // Update project milestones count and possibly status
+  // The stored total is the actual milestone count, but the completion
+  // threshold is the number of predefined milestones (12).
   const updatedProjectMilestones = await getWhere<Milestone>("milestones", "projectId = ?", [m.projectId]);
   const total = updatedProjectMilestones.length;
   const completedCount = updatedProjectMilestones.filter(x => x.status === "Completed").length;
@@ -204,7 +185,7 @@ export async function updateMilestone(
     milestonesCount: { total, completed: completedCount }
   };
   
-  if (completedCount === total && total > 0) {
+  if (completedCount === PREDEFINED_MILESTONES.length) {
     projectUpdates.status = "Completed";
   } else if (project.status === "Planning" && completedCount > 0) {
     projectUpdates.status = "In Progress";

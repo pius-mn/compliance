@@ -11,34 +11,24 @@ import type { Project } from "../../types";
 
 export default function ProjectsPage() {
   const appState = useApp();
+  const { projectSearch, itemsPerPage, setProjects } = appState;
   const [projectPage, setProjectPage] = usePageParam("page", 1);
 
   const fetchProjectsPage = useCallback(async () => {
     const params: Record<string, string> = {};
-    if (appState.projectSearch) params.search = appState.projectSearch;
-    const result = await apiFetchPage<Project>("/api/v1/projects", projectPage || 1, appState.itemsPerPage || 10, params);
-    appState.setProjects(result.data);
-  }, [projectPage, appState.itemsPerPage, appState.projectSearch, appState.setProjects]);
+    if (projectSearch) params.search = projectSearch;
+    const result = await apiFetchPage<Project>("/api/v1/projects", projectPage || 1, itemsPerPage || 10, params);
+    setProjects(result.data);
+  }, [projectPage, projectSearch, itemsPerPage, setProjects]);
 
   useEffect(() => {
     fetchProjectsPage();
   }, [fetchProjectsPage]);
 
-  // Fetch per-page data once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    appState.fetchMilestonesData();
-    appState.fetchSitePhotosData();
-    appState.fetchContractorsData();
-    appState.fetchUsersData();
-    appState.fetchPredefinedMilestonesData();
-    appState.fetchPredefinedPrerequisitesData();
-  }, []);
-
   // Reset page when search changes
   useEffect(() => {
     setProjectPage(1);
-  }, [appState.projectSearch]);
+  }, [projectSearch, setProjectPage]);
 
   const viewProps = appState as unknown as ProjectsViewProps;
 

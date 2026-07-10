@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback } from "react";
 import { TechnicianProfile, TechnicianDocument, WorkRole, DocumentType, User } from "../types";
-import { getDocStatus } from "../utils/helpers";
+import { getDocStatus, getAuthFileUrl } from "../utils/helpers";
 import {
   X,
   Upload,
@@ -133,7 +133,9 @@ function DocumentDetailsToggle({
 }
 
 function DocumentPreview({ doc }: { doc: TechnicianDocument }) {
-  const docFileSrc = doc.file_path ? `/api/v1/ehs/documents/${doc.id}/file` : doc.fileData || null;
+  const docFileSrc = doc.file_path
+    ? getAuthFileUrl(`/api/v1/ehs/documents/${doc.id}/file`)
+    : (doc.fileData || null);
   if (!docFileSrc) return null;
 
   const isImage = doc.fileMimeType?.startsWith("image/") || doc.fileName?.match(/\.(png|jpg|jpeg|gif|webp|svg)$/i);

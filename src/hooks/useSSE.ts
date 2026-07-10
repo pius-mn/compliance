@@ -140,5 +140,5 @@ export function useSSE(
     return () => {
       eventSource.close();
     };
-  }, [user?.id]); // Recreate only when the user ID changes
+  }, [user]);
 }

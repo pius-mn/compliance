@@ -2,7 +2,7 @@ import React from "react";
 import { TechnicianProfile } from "../types";
 import { safeJson, getDocStatus } from "../utils/helpers";
 import { apiFetch, apiFetchJson } from "../utils/apiFetch";
-import type { CollectionKey } from "../utils/dataSync";
+
 
 interface DocumentActionStates {
   user: { id?: number | string; role?: string } | null;
@@ -22,13 +22,13 @@ interface DocumentActionStates {
   approvalComment: string;
   setShowUploadDoc: React.Dispatch<React.SetStateAction<boolean>>;
   setActionLoading: React.Dispatch<React.SetStateAction<boolean>>;
+  setDocuments?: React.Dispatch<React.SetStateAction<Record<string, unknown>[]>>;
 }
 
 export function useDocumentActions(
   states: DocumentActionStates,
   API_BASE: string,
-  triggerBannerAlert: (type: "success" | "error" | "info" | "warning", msg: string) => void,
-  refetchData: (collections: CollectionKey[]) => Promise<void>
+  triggerBannerAlert: (type: "success" | "error" | "info" | "warning", msg: string) => void
 ) {
   const {
     user,
@@ -47,7 +47,8 @@ export function useDocumentActions(
     setApprovalComment,
     approvalComment,
     setShowUploadDoc,
-    setActionLoading
+    setActionLoading,
+    setDocuments
   } = states;
 
   const handleAiVerificationCheck = async () => {
@@ -95,7 +96,6 @@ export function useDocumentActions(
           setUploadedFileBase64(null);
           setUploadedFileMimeType(null);
           setAiAnalysisResult(null);
-          await refetchData(["documents", "notifications"]);
         } else {
           triggerBannerAlert("error", (data.documentInsertError as string) || "Document verification passed but registration failed.");
         }
@@ -146,6 +146,9 @@ export function useDocumentActions(
       });
 
       if (res.ok) {
+        // Parse the returned document so we can update the local state
+        const newDocData = await safeJson(res).catch(() => null) as Record<string, unknown> | null;
+
         setShowUploadDoc(false);
         setNewDoc({
           technicianId: String(technicians[0]?.id || "t-1"),
@@ -158,8 +161,13 @@ export function useDocumentActions(
         setAiAnalysisResult(null);
         setUploadedFileBase64(null);
         setUploadedFileMimeType(null);
+
+        // Immediately reflect the new document in the global list
+        if (newDocData && setDocuments) {
+          setDocuments((prev: Record<string, unknown>[]) => [newDocData, ...prev]);
+        }
+
         triggerBannerAlert("success", "Safety Certificate document dispatched into Audit approval chain!");
-        await refetchData(["documents", "notifications"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "Submission failed");
@@ -188,7 +196,6 @@ export function useDocumentActions(
         setViewingDoc(null);
         setApprovalComment("");
         triggerBannerAlert("success", `HSE Certified Approval registered! New Status: ${updated ? getDocStatus(updated as { rejected: boolean; contractorApproverId: number | null; centralApproverId: number | null }) : "Unknown"}`);
-        await refetchData(["documents"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "HSE workflow failed.");
@@ -220,7 +227,6 @@ export function useDocumentActions(
         setViewingDoc(null);
         setApprovalComment("");
         triggerBannerAlert("warning", `EHS safety documents rejected. Score adjusted on Technician.`);
-        await refetchData(["documents"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "Rejection action denied.");
@@ -236,7 +242,6 @@ export function useDocumentActions(
     try {
       await apiFetch(`${API_BASE}/notifications/clear`, { method: "PUT" });
       triggerBannerAlert("success", "Cleared all dashboard notification badges.");
-      await refetchData(["notifications"]);
     } catch (e) {
       console.error(e);
     }

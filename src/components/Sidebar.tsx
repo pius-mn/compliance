@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { memo } from "react";
 import { useRouter } from "next/navigation";
 import {
   X,
@@ -83,7 +83,7 @@ function NavItem({
   );
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({
+export const Sidebar = memo(function Sidebar({
   user,
   activeTab,
   isSidebarOpen,
@@ -92,7 +92,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setIsDarkMode,
   contractors,
   handleLogout,
-}) => {
+}: SidebarProps) {
   const router = useRouter();
   const navItems = buildNavItems(user);
 
@@ -184,4 +184,4 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </aside>
     </>
   );
-};
+});

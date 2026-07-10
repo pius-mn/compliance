@@ -1,9 +1,9 @@
 "use client";
 
-import React from "react";
+import React, { memo } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
-import { Notification, TechnicianDocument, Contractor } from "../types";
+import { Notification, TechnicianDocument } from "../types";
 import { Drawer } from "./Drawer";
 import { getDocStatus } from "../utils/helpers";
 
@@ -15,7 +15,6 @@ interface NotificationsDrawerProps {
   unreadCount: number;
   handleClearBroadcast: () => void;
   setViewingDoc: (doc: TechnicianDocument) => void;
-  contractors: Contractor[];
 }
 
 // ---- shared bits, pulled out so the two sections below don't repeat markup/logic ----
@@ -129,7 +128,7 @@ function NotificationItem({ notification }: { notification: Notification }) {
   );
 }
 
-export const NotificationsDrawer: React.FC<NotificationsDrawerProps> = ({
+export const NotificationsDrawer = memo(function NotificationsDrawer({
   show,
   onClose,
   notifications,
@@ -137,7 +136,7 @@ export const NotificationsDrawer: React.FC<NotificationsDrawerProps> = ({
   unreadCount,
   handleClearBroadcast,
   setViewingDoc,
-}) => {
+}: NotificationsDrawerProps) {
   const router = useRouter();
 
   const handleReview = (doc: TechnicianDocument) => {
@@ -204,4 +203,4 @@ export const NotificationsDrawer: React.FC<NotificationsDrawerProps> = ({
       </div>
     </Drawer>
   );
-};
+});

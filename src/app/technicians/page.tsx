@@ -1,22 +1,22 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useCallback } from "react";
 import { useApp } from "../../context/AppContext";
-import { usePageData } from "../../hooks/usePageData";
 import { TechniciansView } from "../../views/TechniciansView";
-import { apiFetchPage } from "../../utils/apiFetch";
+import { apiFetch, apiFetchPage } from "../../utils/apiFetch";
 import { usePageParam } from "../../hooks/usePageParam";
 import { Role, DocumentType } from "../../types";
 import type { TechnicianProfile } from "../../types";
+import type { TechnicianDocument } from "../../types";
 
 export default function TechniciansPage() {
+  const appState = useApp();
   const {
     user,
     authToken,
     technicians,
     techSearch,
     setTechSearch,
-    contractors,
     documents,
     newDoc,
     setNewDoc,
@@ -24,15 +24,11 @@ export default function TechniciansPage() {
     setActionLoading,
     triggerBannerAlert,
     triggerToast,
-    refetchData,
     setTechnicians,
-    fetchEHSDocumentsData,
-    ...appState
-  } = useApp();
+    setDocuments,
+  } = appState;
 
   const [techPage, setTechPage] = usePageParam("page", 1);
-
-  const [techsTotal, setTechsTotal] = useState(0);
   const ITEMS_PER_PAGE = 10;
 
   const fetchTechsPage = useCallback(async () => {
@@ -40,26 +36,37 @@ export default function TechniciansPage() {
     if (techSearch) params.search = techSearch;
     const result = await apiFetchPage<TechnicianProfile>("/api/v1/technicians", techPage || 1, ITEMS_PER_PAGE, params);
     setTechnicians(result.data);
-    setTechsTotal(result.total);
   }, [techPage, techSearch, setTechnicians]);
 
+  // Fetch all documents so the technician details modal can display them
+  const fetchDocuments = useCallback(async () => {
+    try {
+      const res = await apiFetch("/api/v1/ehs/documents");
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setDocuments(data as TechnicianDocument[]);
+        }
+      }
+    } catch {
+      // Non-critical — without documents the details modal will show
+      // "Not uploaded yet" but no error is thrown to the user.
+    }
+  }, [setDocuments]);
+
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchTechsPage();
   }, [fetchTechsPage]);
 
-  // Fetch per-page reference data once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Documents only need to be loaded once on mount, not on every search/page flip
   useEffect(() => {
-    appState.fetchContractorsData();
-    appState.fetchWorkRolesData();
-    appState.fetchDocumentTypesData();
-  }, []);
+    fetchDocuments();
+  }, [fetchDocuments]);
 
   // Re-fetch when search changes (but debounced via the page reset logic in view)
   useEffect(() => {
     setTechPage(1);
-  }, [techSearch]);
+  }, [techSearch, setTechPage]);
 
   const handleAddTechnician = async (tech: Record<string, unknown>) => {
     if (user?.role !== Role.ContractorManager && user?.role !== Role.ContractorEHSOfficer) {
@@ -84,7 +91,6 @@ export default function TechniciansPage() {
 
       if (res.ok) {
         triggerBannerAlert("success", "Technician added successfully!");
-        refetchData(["users", "technicians"]);
       } else {
         const err = await res.json().catch(() => ({}));
         triggerBannerAlert("error", err?.error || "Failed to add technician");
@@ -115,7 +121,6 @@ export default function TechniciansPage() {
 
       if (res.ok) {
         triggerBannerAlert("success", "Technician roles updated successfully!");
-        refetchData(["technicians"]);
       } else {
         const err = await res.json().catch(() => ({}));
         triggerBannerAlert("error", err?.error || "Failed to update technician roles");
@@ -142,7 +147,6 @@ export default function TechniciansPage() {
 
       if (res.ok) {
         triggerBannerAlert("success", "Technician updated successfully!");
-        refetchData(["technicians"]);
       } else {
         const err = await res.json().catch(() => ({}));
         triggerBannerAlert("error", err?.error || "Failed to update technician");
@@ -168,7 +172,6 @@ export default function TechniciansPage() {
 
       if (res.ok) {
         triggerToast("success", "Technician deleted successfully!");
-        refetchData(["users", "technicians"]);
       } else {
         const err = await res.json().catch(() => ({}));
         triggerBannerAlert("error", err?.error || "Failed to delete technician");
@@ -180,9 +183,6 @@ export default function TechniciansPage() {
     }
   };
 
-  // Lazy-load supporting data (EHS docs for doc counts in details modal)
-  usePageData(fetchEHSDocumentsData);
-
   return (
     <TechniciansView
       user={user}
@@ -190,7 +190,6 @@ export default function TechniciansPage() {
       filteredTechnicians={technicians || []}
       techSearch={techSearch || ""}
       setTechSearch={setTechSearch}
-      contractors={contractors}
       documents={documents}
       onUpload={(technicianId, docTypeName?: string) => {
         // Resolve documentTypeId from the type name when pre-selected from a work role
@@ -203,7 +202,6 @@ export default function TechniciansPage() {
         });
         setShowUploadDoc(true);
       }}
-      techsTotal={techsTotal}
       onAddTechnician={handleAddTechnician}
       onUpdateTechnicianRoles={handleUpdateTechnicianRoles}
       onUpdateTechnician={handleUpdateTechnician}

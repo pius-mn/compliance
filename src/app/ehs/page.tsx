@@ -12,30 +12,22 @@ import type { TechnicianDocument } from "../../types";
 
 export default function EhsPage() {
   const appState = useApp();
+  const { docSearch, itemsPerPage, setDocuments } = appState;
   const [docPage, setDocPage] = usePageParam("page", 1);
   const [docsTotal, setDocsTotal] = useState(0);
 
   const fetchEHSDocsPage = useCallback(async () => {
     const params: Record<string, string> = {};
-    if (appState.docSearch) params.status = appState.docSearch;
-    const result = await apiFetchPage<TechnicianDocument>("/api/v1/ehs/documents", docPage || 1, appState.itemsPerPage || 10, params);
-    appState.setDocuments(result.data);
+    if (docSearch) params.status = docSearch;
+    const result = await apiFetchPage<TechnicianDocument>("/api/v1/ehs/documents", docPage || 1, itemsPerPage || 10, params);
+    setDocuments(result.data);
     setDocsTotal(result.total);
-  }, [docPage, appState.itemsPerPage, appState.docSearch, appState.setDocuments]);
+  }, [docPage, docSearch, itemsPerPage, setDocuments]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchEHSDocsPage();
   }, [fetchEHSDocsPage]);
-
-  // Fetch per-page data once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    appState.fetchComplianceFlagsData();
-    appState.fetchContractorsData();
-    appState.fetchUsersData();
-    appState.fetchDocumentTypesData();
-  }, []);
 
   const viewProps = appState as unknown as EhsViewProps;
 
@@ -50,7 +42,7 @@ export default function EhsPage() {
       documents={appState.documents || []}
       docsTotal={docsTotal}
       getActiveContractorLabel={getActiveContractorLabel}
-      filteredBranches={appState.contractors}
+      filteredContractors={appState.contractors}
       allDocumentTypes={appState.allDocumentTypes || []}
     />
   );

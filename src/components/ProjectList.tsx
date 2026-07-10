@@ -2,10 +2,26 @@ import React from "react";
 import { 
   Search, Plus, ArrowUpDown 
 } from "lucide-react";
-import { Project, Milestone, Contractor } from "../types";
+import { Project, Contractor } from "../types";
 import { highlightText } from "../utils/ui";
 import { safeNumber } from "../utils/helpers";
 import { PaginationControls } from "./PaginationControls";
+import { TOTAL_MILESTONES } from "../lib/constants";
+
+// Derive milestone display label from milestonesCount (avoids needing allMilestones fetch)
+function getMilestoneStatusLabel(mc: { total: number; completed: number } | undefined): string {
+  if (!mc || mc.total === 0) return "Not Started";
+  if (mc.completed >= mc.total) return "All Complete";
+  if (mc.completed > 0) return "In Progress";
+  return "Pending";
+}
+
+function getMilestoneStatusBadge(mc: { total: number; completed: number } | undefined): string {
+  if (!mc || mc.total === 0) return "Pending";
+  if (mc.completed >= mc.total) return "Completed";
+  if (mc.completed > 0) return "In Progress";
+  return "Pending";
+}
 
 interface ProjectListProps {
   projectSearch: string;
@@ -15,11 +31,9 @@ interface ProjectListProps {
   itemsPerPage: number;
   setItemsPerPage: (count: number) => void;
   filteredProjects: Project[];
-  paginatedProjects: Project[];
   selectedProjectId: number | null;
   setSelectedProjectId: (id: number | null) => void;
   contractors: Contractor[];
-  allMilestones: Milestone[];
   onAddProject: () => void;
   showAddButton?: boolean;
   handleExportProjects?: () => void;
@@ -33,12 +47,9 @@ export const ProjectList: React.FC<ProjectListProps> = ({
   itemsPerPage,
   setItemsPerPage,
   filteredProjects,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  paginatedProjects,
   selectedProjectId,
   setSelectedProjectId,
   contractors = [],
-  allMilestones,
   onAddProject,
   showAddButton = true,
   handleExportProjects
@@ -74,51 +85,18 @@ export const ProjectList: React.FC<ProjectListProps> = ({
         valA = cA.toLowerCase();
         valB = cB.toLowerCase();
       } else if (sortField === "milestone") {
-        const milestonesA = (allMilestones || []).filter(m => m && m.projectId === a.id);
-        const currentMA = (() => {
-          if (milestonesA.length === 0) return "";
-          const inProgress = milestonesA.find(m => m && m.status === "In Progress");
-          if (inProgress) return inProgress.title;
-          const blocked = milestonesA.find(m => m && m.status === "Blocked");
-          if (blocked) return blocked.title;
-          const firstPending = milestonesA.find(m => m && m.status === "Pending");
-          if (firstPending) return firstPending.title;
-          if (milestonesA.every(m => m && m.status === "Completed")) {
-            return milestonesA[milestonesA.length - 1].title;
-          }
-          return milestonesA[0].title;
-        })();
-        const milestonesB = (allMilestones || []).filter(m => m && m.projectId === b.id);
-        const currentMB = (() => {
-          if (milestonesB.length === 0) return "";
-          const inProgress = milestonesB.find(m => m && m.status === "In Progress");
-          if (inProgress) return inProgress.title;
-          const blocked = milestonesB.find(m => m && m.status === "Blocked");
-          if (blocked) return blocked.title;
-          const firstPending = milestonesB.find(m => m && m.status === "Pending");
-          if (firstPending) return firstPending.title;
-          if (milestonesB.every(m => m && m.status === "Completed")) {
-            return milestonesB[milestonesB.length - 1].title;
-          }
-          return milestonesB[0].title;
-        })();
-        valA = currentMA.toLowerCase();
-        valB = currentMB.toLowerCase();
+        valA = getMilestoneStatusLabel(a.milestonesCount);
+        valB = getMilestoneStatusLabel(b.milestonesCount);
       } else if (sortField === "progress") {
-        const milestonesA = (allMilestones || []).filter(m => m && m.projectId === a.id);
-        const completedMA = milestonesA.filter(m => m && m.status === 'Completed').length;
-        valA = completedMA;
-
-        const milestonesB = (allMilestones || []).filter(m => m && m.projectId === b.id);
-        const completedMB = milestonesB.filter(m => m && m.status === 'Completed').length;
-        valB = completedMB;
+        valA = a.milestonesCount?.completed ?? 0;
+        valB = b.milestonesCount?.completed ?? 0;
       }
 
       if (valA < valB) return sortDirection === "asc" ? -1 : 1;
       if (valA > valB) return sortDirection === "asc" ? 1 : -1;
       return 0;
     });
-  }, [filteredProjects, sortField, sortDirection, contractors, allMilestones]);
+  }, [filteredProjects, sortField, sortDirection, contractors]);
 
   // Paginate sorted list locally
   const localPaginatedProjects = React.useMemo(() => {
@@ -207,27 +185,15 @@ export const ProjectList: React.FC<ProjectListProps> = ({
             <tbody className="divide-y divide-slate-100 bg-white">
               {localPaginatedProjects.map((p) => {
                 const isSelected = selectedProjectId === (p.id as number);
-                const projectMilestones = (allMilestones || []).filter(m => m && m.projectId === p.id);
-                const completedM = projectMilestones.filter(m => m && m.status === 'Completed').length;
-                const progressPct = Math.min(100, Math.round((completedM / 12) * 100));
+                const totalM = TOTAL_MILESTONES;
+                const completedM = p.milestonesCount?.completed ?? 0;
+                const progressPct = totalM > 0 ? Math.min(100, Math.round((completedM / totalM) * 100)) : 0;
                 
                 const projectContractor = (contractors || []).find(c => c.id === p.contractorId);
 
-                const currentMilestone = (() => {
-                  if (projectMilestones.length === 0) return null;
-                  const inProgress = projectMilestones.find(m => m && m.status === "In Progress");
-                  if (inProgress) return inProgress;
-                  const blocked = projectMilestones.find(m => m && m.status === "Blocked");
-                  if (blocked) return blocked;
-                  const firstPending = projectMilestones.find(m => m && m.status === "Pending");
-                  if (firstPending) return firstPending;
-                  if (projectMilestones.every(m => m && m.status === "Completed")) {
-                    return projectMilestones[projectMilestones.length - 1];
-                  }
-                  return projectMilestones[0];
-                })();
-                const currentMilestoneTitle = currentMilestone ? currentMilestone.title : "Site Specifications & Oversight";
-                const currentMilestoneStatus = currentMilestone ? currentMilestone.status : "Pending";
+                // Derive milestone status from milestonesCount (avoids needing allMilestones fetch)
+                const currentMilestoneTitle = getMilestoneStatusLabel(p.milestonesCount);
+                const currentMilestoneStatus = getMilestoneStatusBadge(p.milestonesCount);
 
                 return (
                   <tr 
@@ -295,7 +261,7 @@ export const ProjectList: React.FC<ProjectListProps> = ({
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between text-[10px]">
                           <span className="text-slate-800 font-bold">
-                            {completedM} / 12
+                            {completedM} / {totalM}
                           </span>
                           <span className={`font-black ${progressPct >= 100 ? "text-emerald-600" : "text-slate-600"}`}>
                             {progressPct}%

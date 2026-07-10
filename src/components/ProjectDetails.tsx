@@ -6,6 +6,7 @@ import { compressAndResizeImage } from "../utils/imageOptimizer";
 import { generateProjectAuditReport } from "../utils/pdfGenerator";
 import { Project, Milestone, User, Role, SitePhoto, TechnicianProfile, Contractor } from "../types";
 import { MilestoneForm } from "./MilestoneForm";
+import { TOTAL_MILESTONES } from "../lib/constants";
 import { MilestoneCard } from "./MilestoneCard";
 import { DailyActivities } from "./DailyActivities";
 import { SpecsSiteCrew } from "./SpecsSiteCrew";
@@ -378,10 +379,9 @@ export const ProjectDetails: React.FC<ProjectDetailsProps> = ({
 
   const projectContractor = (contractors || []).find(b => b && b.id === project.contractorId);
   const projectMilestones = (allMilestones || []).filter(m => m && m.projectId === project.id);
-  const completedM = projectMilestones.filter(m => m && m.status === "Completed").length;
-  const totalM = projectMilestones.length;
-  const completionPct = Math.min(100, Math.round((completedM / 12) * 100));
-  const progressOutOf12 = completedM;
+  const completedM = project.milestonesCount?.completed ?? projectMilestones.filter(m => m && m.status === "Completed").length;
+  const totalM = TOTAL_MILESTONES;
+  const completionPct = totalM > 0 ? Math.min(100, Math.round((completedM / totalM) * 100)) : 0;
 
   const currentMilestone =
     projectMilestones.find(m => m && m.status === "In Progress") ||
@@ -532,7 +532,7 @@ export const ProjectDetails: React.FC<ProjectDetailsProps> = ({
             </div>
             <div className="flex items-end justify-between">
               <div className="text-2xl font-black text-slate-900 dark:text-white leading-none">
-                {progressOutOf12} <span className="text-sm text-slate-400 dark:text-slate-500 font-normal">/ 12</span>
+                {completedM} <span className="text-sm text-slate-400 dark:text-slate-500 font-normal">/ {totalM}</span>
               </div>
               <CardIcon icon={Activity} className="bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 p-2" />
             </div>
@@ -678,7 +678,6 @@ export const ProjectDetails: React.FC<ProjectDetailsProps> = ({
         handleCreateMilestone={handleCreateMilestone}
         actionLoading={actionLoading}
         predefinedMilestones={predefinedMilestones}
-        projectId={project.id}
         projectName={project.name}
         milestonesCount={milestones.length}
       />

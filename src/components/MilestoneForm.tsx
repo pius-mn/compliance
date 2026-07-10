@@ -9,7 +9,6 @@ interface MilestoneFormProps {
   handleCreateMilestone: (e: React.FormEvent) => void;
   actionLoading: boolean;
   predefinedMilestones: string[];
-  projectId: number;
   projectName: string;
   milestonesCount: number;
 }
@@ -22,8 +21,6 @@ export const MilestoneForm: React.FC<MilestoneFormProps> = ({
   handleCreateMilestone,
   actionLoading,
   predefinedMilestones,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  projectId,
   projectName,
   milestonesCount,
 }) => {

@@ -26,7 +26,7 @@ export interface ManagementViewProps {
   thresholdLoading: boolean;
 }
 
-const ManagementView: React.FC<ManagementViewProps> = ({
+const ManagementView: React.FC<ManagementViewProps> = React.memo(function ManagementView({
   user,
   actionLoading,
   handleCreateRole,
@@ -44,7 +44,7 @@ const ManagementView: React.FC<ManagementViewProps> = ({
   aiScoreThreshold,
   onUpdateThreshold,
   thresholdLoading
-}) => {
+}) {
   // Local state for editing WorkRoles
   const [editingRoleId, setEditingRoleId] = useState<number | string | null>(null);
   const [editingRoleName, setEditingRoleName] = useState("");
@@ -55,8 +55,11 @@ const ManagementView: React.FC<ManagementViewProps> = ({
   const [editingDocTypeName, setEditingDocTypeName] = useState("");
   const [thresholdInput, setThresholdInput] = useState(String(aiScoreThreshold));
 
-  // Sync threshold input when prop changes
+  // Sync threshold input when prop changes.
+  // This is intentionally in an effect because the slider state needs to reset
+  // when the server-persisted value changes (e.g. another admin updates it).
   React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setThresholdInput(String(aiScoreThreshold));
   }, [aiScoreThreshold]);
 
@@ -485,6 +488,6 @@ const ManagementView: React.FC<ManagementViewProps> = ({
       </div>
     </div>
   );
-};
+});
 
 export default ManagementView;

@@ -183,7 +183,7 @@ function UserRow({
   );
 }
 
-export const SafaricomUsersView: React.FC<SafaricomUsersViewProps> = ({
+const SafaricomUsersView: React.FC<SafaricomUsersViewProps> = React.memo(function SafaricomUsersView({
   user,
   users = [],
   usersTotal,
@@ -200,7 +200,7 @@ export const SafaricomUsersView: React.FC<SafaricomUsersViewProps> = ({
   handleUpdateUser,
   handleDeleteUser,
   actionLoading
-}) => {
+}) {
   // Editing state
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [editingData, setEditingData] = useState<EditingData>({
@@ -389,4 +389,6 @@ export const SafaricomUsersView: React.FC<SafaricomUsersViewProps> = ({
       </div>
     </div>
   );
-};
+});
+
+export { SafaricomUsersView };

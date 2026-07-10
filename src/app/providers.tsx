@@ -1,5 +1,10 @@
 "use client";
 
+// why-did-you-render must be imported before any React code so its
+// monkey-patch is applied before React renders components.
+// Only activates in development on the client side.
+import "../wdyr";
+
 import React from "react";
 import { Toaster } from "react-hot-toast";
 import { AppProvider } from "../context/AppContext";

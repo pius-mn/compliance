@@ -43,6 +43,8 @@ interface UploadDocumentFormProps {
   technicians: Record<string, unknown>[];
   allDocumentTypes: DocumentType[];
   allRoles: Record<string, unknown>[]; // WorkRole[]
+  /** Called after a document is successfully uploaded, with the new document data */
+  onUploadComplete?: (doc: Record<string, unknown>) => void;
 }
 
 export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
@@ -58,6 +60,7 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
   user,
   technicians,
   allDocumentTypes,
+  onUploadComplete,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -182,6 +185,11 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
       setCurrentProgressPercent(100);
       setStep("success");
 
+      // Notify parent of the newly uploaded document
+      if (onUploadComplete && aiData?.document) {
+        onUploadComplete(aiData.document as Record<string, unknown>);
+      }
+
     } catch (err) {
       console.error(err);
       setUploadError("A communication exception occurred. Please verify your connection to Safaricom Central Server.");
@@ -229,6 +237,15 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
       }
 
       setStep("success");
+
+      // Notify parent of the newly uploaded document
+      if (onUploadComplete) {
+        const resultData = await safeJson(submitRes).catch(() => null);
+        if (resultData) {
+          onUploadComplete(resultData as Record<string, unknown>);
+        }
+      }
+
     } catch (err) {
       console.error(err);
       setUploadError("Connection failed during exception override dispatch.");
@@ -309,6 +326,7 @@ export const UploadDocumentForm: React.FC<UploadDocumentFormProps> = ({
 
                 {uploadedFileMimeType?.startsWith("image/") ? (
                   <div className="relative h-28 w-full bg-slate-50 rounded-xl overflow-hidden flex items-center justify-center border border-slate-100 shadow-sm">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img 
                       src={uploadedFileBase64} 
                       alt="File preview" 

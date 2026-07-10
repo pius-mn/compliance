@@ -1,32 +1,12 @@
 "use client";
 
-import React, { createContext, useContext, useMemo, useCallback, useRef, useEffect } from "react";
+import React, { createContext, useContext, useMemo, useCallback, useEffect } from "react";
 import toast from "react-hot-toast";
 import { useAppStates } from "../hooks/useAppStates";
+import { apiFetch } from "../utils/apiFetch";
 import { useProjectActions } from "../hooks/useProjectActions";
 import { useDocumentActions } from "../hooks/useDocumentActions";
-import {
-  fetchNotificationsData,
-  refetchCollections,
-  // Lazy fetchers
-  fetchProjectsData,
-  fetchTechniciansData,
-  fetchEHSDocumentsData,
-  fetchComplianceFlagsData,
-  fetchAuditLogsData,
-  fetchSitePhotosData,
-  fetchMilestonesData,
-  fetchDashboardStatsData,
-  fetchContractorsData,
-  fetchUsersData,
-  fetchWorkRolesData,
-  fetchDocumentTypesData,
-  fetchPredefinedMilestonesData,
-  fetchPredefinedPrerequisitesData,
-} from "../utils/dataSync";
-
-import type { DashboardStatsResponse, CollectionKey, DataSyncStates } from "../utils/dataSync";
-import type { User } from "../types";
+import type { User, Contractor, WorkRole, DocumentType } from "../types";
 
 interface LoginData {
   user: User;
@@ -44,20 +24,9 @@ interface AppContextValue {
   handleLogout: () => void;
   triggerBannerAlert: (type: "success" | "error" | "info" | "warning", message: string) => void;
   triggerToast: (type: "success" | "error", message: string) => void;
-  refetchData: (collections: CollectionKey[]) => Promise<void>;
-
-  // Lazy data fetchers
-  fetchProjectsData: (params?: Record<string, string>) => Promise<void>;
-  fetchTechniciansData: (params?: Record<string, string>) => Promise<void>;
-  fetchEHSDocumentsData: (params?: Record<string, string>) => Promise<void>;
-  fetchNotificationsData: () => Promise<void>;
-  fetchComplianceFlagsData: () => Promise<void>;
-  fetchAuditLogsData: () => Promise<void>;
-  fetchSitePhotosData: () => Promise<void>;
-  fetchMilestonesData: () => Promise<void>;
-  fetchDashboardStatsData: (userId?: string, contractorId?: string) => Promise<DashboardStatsResponse | null>;
 
   // Dynamic states & actions from hooks
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 }
 
@@ -65,6 +34,7 @@ const AppContext = createContext<AppContextValue>(null!);
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const states = useAppStates();
+  const { setUser, setAuthToken } = states;
   const API_BASE = "/api/v1";
 
   const triggerBannerAlert = useCallback((type: "success" | "error" | "info" | "warning", message: string) => {
@@ -93,8 +63,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const handleLogin = useCallback(({ user, token }: LoginData) => {
-    states.setUser(user);
-    states.setAuthToken(token ?? null);
+    setUser(user);
+    setAuthToken(token ?? null);
 
     localStorage.setItem("user", JSON.stringify(user));
     if (token) {
@@ -102,46 +72,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } else {
       localStorage.removeItem("authToken");
     }
-  }, [states.setUser, states.setAuthToken]);
+  }, [setUser, setAuthToken]);
 
   const handleLogout = useCallback(() => {
-    states.setUser(null);
-    states.setAuthToken(null);
+    setUser(null);
+    setAuthToken(null);
     localStorage.removeItem("user");
     localStorage.removeItem("authToken");
     localStorage.removeItem("rememberedEmail");
-  }, [states.setUser, states.setAuthToken]);
-
-  // DataSync states cast (once)
-  const ds = useMemo(() => states as unknown as DataSyncStates, [states]);
-
-  // Lazy fetchers – stable reference
-  const lazyFetchers = useMemo(
-    () => ({
-      fetchProjectsData: (params?: Record<string, string>) => fetchProjectsData(ds, API_BASE, params),
-      fetchTechniciansData: (params?: Record<string, string>) => fetchTechniciansData(ds, API_BASE, params),
-      fetchEHSDocumentsData: (params?: Record<string, string>) => fetchEHSDocumentsData(ds, API_BASE, params),
-      fetchNotificationsData: () => fetchNotificationsData(ds, API_BASE),
-      fetchComplianceFlagsData: () => fetchComplianceFlagsData(ds, API_BASE),
-      fetchAuditLogsData: () => fetchAuditLogsData(ds, API_BASE),
-      fetchSitePhotosData: () => fetchSitePhotosData(ds, API_BASE),
-      fetchMilestonesData: () => fetchMilestonesData(ds, API_BASE),
-      fetchDashboardStatsData: (userId?: string, contractorId?: string) =>
-        fetchDashboardStatsData(API_BASE, userId, contractorId),
-      fetchContractorsData: () => fetchContractorsData(ds, API_BASE),
-      fetchUsersData: () => fetchUsersData(ds, API_BASE),
-      fetchWorkRolesData: () => fetchWorkRolesData(ds, API_BASE),
-      fetchDocumentTypesData: () => fetchDocumentTypesData(ds, API_BASE),
-      fetchPredefinedMilestonesData: () => fetchPredefinedMilestonesData(ds, API_BASE),
-      fetchPredefinedPrerequisitesData: () => fetchPredefinedPrerequisitesData(ds, API_BASE),
-    }),
-    [ds, API_BASE]
-  );
-
-  const refetchData = useCallback(
-    (collections: CollectionKey[]) => refetchCollections(ds, API_BASE, collections),
-    [ds, API_BASE]
-  );
+  }, [setUser, setAuthToken]);
 
   // ── Global auth:expired handler (debounced) ──────────────────────────────
   // When apiFetch detects a 401 (expired/invalid token), this listener fires
@@ -177,37 +116,58 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   }, [handleLogout]);
 
-  // Initial data sync (reference + notifications)
-  const initialFetchRef = useRef(false);
-
+  // ── Global reference data fetching ──────────────────────────────────
+  // Load contractors, users, work roles, and document types once at the app
+  // level so they're available on every page without per-page fetching.
   useEffect(() => {
-    if (!states.user) {
-      initialFetchRef.current = false;
-      return;
-    }
+    const fetchReferenceData = async () => {
+      try {
+        const [contrRes, usersRes, rolesRes, docTypesRes] = await Promise.all([
+          apiFetch("/api/v1/contractors"),
+          apiFetch("/api/v1/users"),
+          apiFetch("/api/v1/work-roles"),
+          apiFetch("/api/v1/document-types"),
+        ]);
 
-    if (initialFetchRef.current) return;
+        if (contrRes.ok) {
+          const data = await contrRes.json() as Contractor[];
+          states.setContractors(Array.isArray(data) ? data : []);
+        }
 
-    initialFetchRef.current = true;
+        if (usersRes.ok) {
+          const data = await usersRes.json() as User[];
+          states.setAllUsers(Array.isArray(data) ? data : []);
+        }
 
-    Promise.allSettled([
-      fetchNotificationsData(ds, API_BASE),
-    ]).catch(console.error); // Prevent unhandled promise rejection
-  }, [states.user, ds, API_BASE]);
+        if (rolesRes.ok) {
+          const data = await rolesRes.json() as WorkRole[];
+          states.setAllRoles(Array.isArray(data) ? data : []);
+        }
 
-  // Project & Document actions
+        if (docTypesRes.ok) {
+          const data = await docTypesRes.json() as DocumentType[];
+          states.setAllDocumentTypes(Array.isArray(data) ? data : []);
+        }
+      } catch {
+        // Non-critical — components gracefully degrade if data isn't loaded
+      }
+    };
+
+    fetchReferenceData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Project & Document actions – called at top level (Rules of Hooks compliant)
   const projectActions = useProjectActions(
     states as unknown as Parameters<typeof useProjectActions>[0],
     API_BASE,
-    triggerBannerAlert,
-    refetchData
+    triggerBannerAlert
   );
 
   const documentActions = useDocumentActions(
     states as unknown as Parameters<typeof useDocumentActions>[0],
     API_BASE,
-    triggerBannerAlert,
-    refetchData
+    triggerBannerAlert
   );
 
   // Final context value – minimized dependency array + stable objects
@@ -216,22 +176,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ...states,
       ...projectActions,
       ...documentActions,
-      ...lazyFetchers,
       handleLogin,
       handleLogout,
       triggerBannerAlert,
       triggerToast,
-      refetchData,
     }),
     [
       states,
       projectActions,
       documentActions,
-      lazyFetchers,
       handleLogin,
       handleLogout,
       triggerBannerAlert,
-      refetchData,
+      triggerToast,
     ]
   );
 

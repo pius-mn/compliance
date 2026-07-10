@@ -18,30 +18,28 @@ export default function ManagementPage() {
     actionLoading,
     setActionLoading,
     triggerBannerAlert,
-    refetchData,
-    ...rest
   } = appState;
 
   // AI score threshold setting
   const [aiScoreThreshold, setAiScoreThreshold] = useState(50);
   const [thresholdLoading, setThresholdLoading] = useState(true);
 
-  const fetchThreshold = useCallback(async () => {
-    try {
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (user && authToken) headers["Authorization"] = `Bearer ${authToken}`;
-      const res = await fetch(`/api/v1/settings/ai-score-threshold`, { headers });
-      if (res.ok) {
-        const data = await res.json();
-        setAiScoreThreshold(data.threshold);
-      }
-    } catch {}
-    setThresholdLoading(false);
-  }, [user, authToken]);
-
   useEffect(() => {
-    fetchThreshold();
-  }, [fetchThreshold]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (user && authToken) headers["Authorization"] = `Bearer ${authToken}`;
+        const res = await fetch(`/api/v1/settings/ai-score-threshold`, { headers });
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setAiScoreThreshold(data.threshold);
+        }
+      } catch {}
+      if (!cancelled) setThresholdLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [user, authToken]);
 
   const handleUpdateThreshold = useCallback(async (newThreshold: number) => {
     setActionLoading(true);
@@ -84,7 +82,6 @@ export default function ManagementPage() {
       if (res.ok) {
         triggerBannerAlert("success", "Work role created successfully!");
         setNewRole({ name: "", documentTypeIds: [] });
-        refetchData(["workRoles", "documentTypes"]);
       } else {
         const err = await res.json().catch(() => ({}));
         triggerBannerAlert("error", err?.error || "Failed to create role");
@@ -110,7 +107,6 @@ export default function ManagementPage() {
       });
       if (res.ok) {
         triggerBannerAlert("success", "Work role updated successfully!");
-        refetchData(["workRoles"]);
       } else {
         const err = await res.json().catch(() => ({}));
         triggerBannerAlert("error", err?.error || "Failed to update role");
@@ -135,7 +131,6 @@ export default function ManagementPage() {
       });
       if (res.ok) {
         triggerBannerAlert("success", "Work role deleted successfully!");
-        refetchData(["workRoles"]);
       } else {
         const err = await res.json().catch(() => ({}));
         triggerBannerAlert("error", err?.error || "Failed to delete role");
@@ -163,7 +158,6 @@ export default function ManagementPage() {
       if (res.ok) {
         triggerBannerAlert("success", "Document type created successfully!");
         setNewDocumentType({ name: "" });
-        refetchData(["documentTypes", "workRoles"]);
       } else {
         const err = await res.json().catch(() => ({}));
         triggerBannerAlert("error", err?.error || "Failed to create document type");
@@ -189,7 +183,6 @@ export default function ManagementPage() {
       });
       if (res.ok) {
         triggerBannerAlert("success", "Document type updated successfully!");
-        refetchData(["documentTypes"]);
       } else {
         const err = await res.json().catch(() => ({}));
         triggerBannerAlert("error", err?.error || "Failed to update document type");
@@ -214,7 +207,6 @@ export default function ManagementPage() {
       });
       if (res.ok) {
         triggerBannerAlert("success", "Document type deleted successfully!");
-        refetchData(["documentTypes", "workRoles"]);
       } else {
         const err = await res.json().catch(() => ({}));
         triggerBannerAlert("error", err?.error || "Failed to delete document type");
@@ -226,17 +218,9 @@ export default function ManagementPage() {
     }
   };
 
-  // Fetch work roles + document types once on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    appState.fetchWorkRolesData();
-    appState.fetchDocumentTypesData();
-  }, []);
-
   return (
     <ManagementView
       user={user}
-      {...rest}
       actionLoading={actionLoading}
       allRoles={allRoles || []}
       allDocumentTypes={allDocumentTypes || []}

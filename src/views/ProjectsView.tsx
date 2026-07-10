@@ -23,7 +23,6 @@ export interface ProjectsViewProps {
   uploadSitePhoto?: (projectId: number, photoData: string, description: string) => Promise<void>;
   sitePhotos: SitePhoto[];
   deleteSitePhoto: (id: number) => void;
-  paginatedProjects: Project[];
   filteredProjects: Project[];
   allMilestones: Milestone[];
   projects: Project[];
@@ -63,7 +62,7 @@ export interface ProjectsViewProps {
   handleExportProjects?: () => void;
 }
 
-export default function ProjectsView(props: ProjectsViewProps) {
+const ProjectsView = React.memo(function ProjectsView(props: ProjectsViewProps) {
   const {
     user,
     projectSearch,
@@ -76,7 +75,6 @@ export default function ProjectsView(props: ProjectsViewProps) {
     selectedProjectId,
     setSelectedProjectId,
     contractors,
-    allMilestones,
     showAddProject,
     setShowAddProject,
     handleCreateProject,
@@ -98,11 +96,6 @@ export default function ProjectsView(props: ProjectsViewProps) {
     }
     return projects;
   }, [filteredProjects, props.projects, isTechnician, user]);
-
-  const paginatedDisplayProjects = React.useMemo(() => {
-    const start = (projectPage - 1) * itemsPerPage;
-    return displayProjects.slice(start, start + itemsPerPage);
-  }, [displayProjects, projectPage, itemsPerPage]);
 
   const selectedProject = projects.find(p => p.id === selectedProjectId) || null;
 
@@ -131,14 +124,12 @@ export default function ProjectsView(props: ProjectsViewProps) {
               itemsPerPage={itemsPerPage}
               setItemsPerPage={setItemsPerPage}
               filteredProjects={displayProjects}
-              paginatedProjects={paginatedDisplayProjects}
               selectedProjectId={selectedProjectId}
               setSelectedProjectId={(id: number | null) => {
                 setSelectedProjectId(id);
                 if (id) props.fetchMilestones(id);
               }}
               contractors={contractors}
-              allMilestones={allMilestones}
               onAddProject={() => setShowAddProject(true)}
               showAddButton={user?.role === Role.SafaricomAdmin || user?.role === Role.SafaricomProjectCreator}
               handleExportProjects={props.handleExportProjects}
@@ -363,4 +354,6 @@ export default function ProjectsView(props: ProjectsViewProps) {
       )}
     </div>
   );
-}
+});
+
+export default ProjectsView;

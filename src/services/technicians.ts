@@ -29,6 +29,45 @@ export async function getTechnicians(): Promise<Record<string, unknown>[]> {
   }));
 }
 
+/**
+ * Lightweight version of getTechnicians for the compliance scanner.
+ *
+ * Projects only the columns needed by runComplianceScan() — id, name, status,
+ * overallEhsScore — avoiding full-table SELECT * on the technicians table
+ * (which includes phone TEXT, specialization TEXT, lastEhsAuditDate TEXT,
+ * workRoleIds JSON, etc. that are never examined by the compliance engine).
+ */
+export async function getTechniciansForCompliance(): Promise<{
+  id: number;
+  name: string;
+  status: string;
+  overallEhsScore: number;
+}[]> {
+  const [techs, workRoles, approvedDocRows] = await Promise.all([
+    query("SELECT id, name, status, workRoleIds FROM technicians"),
+    getAll<Record<string, unknown>>("workRoles"),
+    query(
+      "SELECT technicianId, documentTypeId, rejected, contractorApproverId, centralApproverId, expiryDate FROM documents WHERE rejected = FALSE AND contractorApproverId IS NOT NULL AND centralApproverId IS NOT NULL"
+    ),
+  ]);
+
+  const approvedDocLookup = buildApprovedDocLookup(
+    approvedDocRows as { technicianId: number; documentTypeId: number | null; rejected: boolean; contractorApproverId: number | null; centralApproverId: number | null; expiryDate: string | null }[],
+  );
+
+  return techs.map((t) => ({
+    id: t.id as number,
+    name: t.name as string,
+    status: t.status as string,
+    overallEhsScore: computeTechnicianEhsScore(
+      t.id as number,
+      t.workRoleIds as number[] | undefined,
+      workRoles as { id: number; documentTypeIds: number[] }[],
+      approvedDocLookup,
+    ),
+  }));
+}
+
 export async function updateTechnicianRoles(
   id: number,
   workRoleIds: number[],

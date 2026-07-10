@@ -5,8 +5,40 @@ import { useApp } from "../context/AppContext";
 import { usePageData } from "../hooks/usePageData";
 import DashboardView from "../views/DashboardView";
 import { apiFetch } from "../utils/apiFetch";
-import type { DashboardStatsResponse } from "../utils/dataSync";
 import type { TechnicianDocument } from "../types";
+
+// Dashboard stats shape returned by the server
+export interface DashboardStatsResponse {
+  user: { id: string; name: string; role: string; isSafaricom: boolean; isContractor: boolean; contractorId: string | null };
+  contractorFilter: string | null;
+  contractorName: string | null;
+  projectStats: { total: number; completed: number; inProgress: number; planning: number; onHold: number; totalBudget: number };
+  documentStats: { total: number; approved: number; pendingContractor: number; pendingCentral: number; rejected: number };
+  technicianStats: { total: number; active: number; warningNeeded: number; avgScore: number };
+  milestoneStats: { total: number; completed: number; inProgress: number; pending: number; blocked: number; completionRate: number };
+  complianceStats: { total: number; active: number; resolved: number; highSeverity: number; mediumSeverity: number; lowSeverity: number };
+  complianceTrend: Array<{ month: string; created: number; resolved: number }>;
+  milestoneCompletedTrend: Array<{ month: string; created: number; resolved: number }>;
+}
+
+async function fetchDashboardStats(urlBase: string, userId?: string, contractorId?: string): Promise<DashboardStatsResponse | null> {
+  try {
+    const params = new URLSearchParams();
+    if (userId) params.set("userId", userId);
+    if (contractorId) params.set("contractorId", contractorId);
+    const qs = params.toString();
+    const url = qs ? `${urlBase}/dashboard/stats?${qs}` : `${urlBase}/dashboard/stats`;
+    const res = await apiFetch(url);
+    if (res.ok) {
+      return await res.json();
+    }
+    console.error("Failed to fetch dashboard stats");
+    return null;
+  } catch (err) {
+    console.error("Failed to fetch dashboard stats:", err);
+    return null;
+  }
+}
 
 export default function DashboardPage() {
   const {
@@ -15,8 +47,6 @@ export default function DashboardPage() {
     notifications,
     setViewingDoc,
     handleClearBroadcast,
-    fetchDashboardStatsData,
-    fetchNotificationsData,
     ...appState
   } = useApp();
 
@@ -30,22 +60,18 @@ export default function DashboardPage() {
   const loadStats = useCallback(
     async (contractorId?: string | null) => {
       const userId = user?.role === "Field Technician" ? user.id : undefined;
-      const stats = await fetchDashboardStatsData(userId ? String(userId) : undefined, contractorId || undefined);
+      const stats = await fetchDashboardStats(API_BASE, userId ? String(userId) : undefined, contractorId || undefined);
       if (stats) {
         setDashboardStats(stats);
       }
     },
-    [user, fetchDashboardStatsData]
+    [user, API_BASE]
   );
 
-  // Lazy-load dashboard stats + notifications + pending documents
+  // Lazy-load dashboard stats + pending documents
   usePageData(async () => {
     const userId = user?.role === "Field Technician" ? user.id : undefined;
-    const [stats] = await Promise.all([
-      fetchDashboardStatsData(userId ? String(userId) : undefined),
-      fetchNotificationsData(),
-      appState.fetchContractorsData(),
-    ]);
+    const stats = await fetchDashboardStats(API_BASE, userId ? String(userId) : undefined);
 
     if (stats) {
       setDashboardStats(stats);

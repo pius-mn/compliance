@@ -55,6 +55,10 @@ export async function getAuthenticatedUser(req: Request): Promise<User | null> {
     } else {
       const url = new URL(req.url);
       token = url.searchParams.get("token") || "";
+      if (token) {
+        const path = url.pathname;
+        console.warn(`[AUTH] token= query param fallback used on ${path} — less secure than Authorization header`);
+      }
     }
 
     if (!token) return null;

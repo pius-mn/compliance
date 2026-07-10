@@ -27,18 +27,18 @@ export async function GET(req: Request) {
       ]);
 
       list = list.filter(flag => {
-        let flagBranchId: number | null = null;
+        let flagContractorId: number | null = null;
         if (flag.targetType === "project") {
           const project = (projects as Record<string, unknown>[]).find((p) => (p.id as number) === flag.targetId);
-          flagBranchId = project ? (project.contractorId as number | null) : null;
+          flagContractorId = project ? (project.contractorId as number | null) : null;
         } else if (flag.targetType === "document") {
           const doc = (documents as Record<string, unknown>[]).find((d) => (d.id as number) === flag.targetId);
-          flagBranchId = doc ? (doc.contractorId as number | null) : null;
+          flagContractorId = doc ? (doc.contractorId as number | null) : null;
         } else if (flag.targetType === "technician") {
           const tech = (technicians as Record<string, unknown>[]).find((t) => (t.id as number) === flag.targetId);
-          flagBranchId = tech ? ((tech.contractorId as number | null) || null) : null;
+          flagContractorId = tech ? ((tech.contractorId as number | null) || null) : null;
         }
-        return flagBranchId === Number(activeContractorId);
+        return flagContractorId === Number(activeContractorId);
       });
     }
 

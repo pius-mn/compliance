@@ -28,6 +28,7 @@ import {
   User,
   ComplianceFlag
 } from "../types";
+import { TOTAL_MILESTONES } from "../lib/constants";
 import { safeNumber, safeString, getDocStatus } from "../utils/helpers";
 import { 
   ResponsiveContainer, 
@@ -350,12 +351,12 @@ const ComplianceFlagCard = React.memo(function ComplianceFlagCard({
 interface ExpiringDocRowProps {
   doc: TechnicianDocument & { remainingDays: number };
   phone: string;
-  docBranch: string;
+  docContractor: string;
   isNotified: boolean;
   onNotify: (docId: number) => void;
 }
 
-const ExpiringDocRow = React.memo(function ExpiringDocRow({ doc, phone, docBranch, isNotified, onNotify }: ExpiringDocRowProps) {
+const ExpiringDocRow = React.memo(function ExpiringDocRow({ doc, phone, docContractor, isNotified, onNotify }: ExpiringDocRowProps) {
   const isExpired = doc.remainingDays < 0;
   const { badge: urgencyBadge, label: urgencyLabel } = getUrgencyMeta(doc.remainingDays, isExpired);
 
@@ -365,7 +366,7 @@ const ExpiringDocRow = React.memo(function ExpiringDocRow({ doc, phone, docBranc
         <div className="font-extrabold text-slate-900 dark:text-slate-100">{doc.technicianName}</div>
         <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">{phone || "+254 No Phone"}</div>
       </td>
-      <td className="p-3.5 font-bold text-slate-600 dark:text-slate-300">{docBranch}</td>
+      <td className="p-3.5 font-bold text-slate-600 dark:text-slate-300">{docContractor}</td>
       <td className="p-3.5">
         <div className="font-bold text-slate-800 dark:text-slate-200">{doc.type}</div>
         <div className="text-[10px] font-mono text-slate-500 dark:text-slate-400 truncate max-w-sm mt-0.5">{doc.fileName}</div>
@@ -461,7 +462,7 @@ const SiteClearanceRow = React.memo(function SiteClearanceRow({
   );
 });
 
-const ReportingView: React.FC<ReportingViewProps> = ({
+const ReportingView: React.FC<ReportingViewProps> = React.memo(function ReportingView({
   projects,
   technicians,
   documents,
@@ -472,9 +473,9 @@ const ReportingView: React.FC<ReportingViewProps> = ({
   onTriggerScan,
   onResolveFlag,
   milestones = []
-}) => {
+}) {
   // Filters state
-  const [selectedBranchId, setSelectedBranchId] = useState<string>("all");
+  const [selectedContractorId, setSelectedContractorId] = useState<string>("all");
   const [selectedProjectId, setSelectedProjectId] = useState<string>("all");
 
 
@@ -489,7 +490,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
   // Document Expiration Predictor States
   const [expirationDays, setExpirationDays] = useState<string>("30");
   const [expiredOnlyFilter, setExpiredOnlyFilter] = useState<boolean>(false);
-  const [expirationBranchFilter, setExpirationBranchFilter] = useState<string>("all");
+  const [expirationContractorFilter, setExpirationContractorFilter] = useState<string>("all");
   const [notifiedDocs, setNotifiedDocs] = useState<Record<string, boolean>>({});
   
   // AI report generation state
@@ -498,7 +499,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
   // Reset Filters
   const handleResetFilters = () => {
-    setSelectedBranchId("all");
+    setSelectedContractorId("all");
     setSelectedProjectId("all");
   };
 
@@ -523,7 +524,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
   // Contractor isolation security constraints (Contractor Managers / Contractor Safety Leads can only view their own contractor)
   const isCentral = currentUser?.isCentral ?? true;
-  const activeContractorId = isCentral ? selectedBranchId : (currentUser?.contractorId || "all");
+  const activeContractorId = isCentral ? selectedContractorId : (currentUser?.contractorId || "all");
 
   // Filtered lists
   const filteredProjects = useMemo(() => {
@@ -668,8 +669,8 @@ const ReportingView: React.FC<ReportingViewProps> = ({
       // Contractor safety filtering
       if (!isCentral) {
         if (doc.contractorId !== currentUser?.contractorId) return false;
-      } else if (expirationBranchFilter !== "all") {
-        if (String(doc.contractorId) !== String(expirationBranchFilter)) return false;
+      } else if (expirationContractorFilter !== "all") {
+        if (String(doc.contractorId) !== String(expirationContractorFilter)) return false;
       }
       return true;
     });
@@ -694,7 +695,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
         return item.remainingDays <= thresholdDays;
       })
       .sort((a, b) => a.remainingDays - b.remainingDays);
-  }, [documents, expirationDays, expiredOnlyFilter, expirationBranchFilter, isCentral, currentUser]);
+  }, [documents, expirationDays, expiredOnlyFilter, expirationContractorFilter, isCentral, currentUser]);
 
   // Compute calculated metrics
   const stats = useMemo(() => {
@@ -713,18 +714,18 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
     // 4. Contractor Performance League
     const partnerStats = (contractors || []).map(b => {
-      const branchTechs = (technicians || []).filter(t => {
+      const contractorTechs = (technicians || []).filter(t => {
         const u = (allUsers || []).find(uUser => uUser.id === t.userId);
         return u?.contractorId === b.id;
       });
-      const avgBranchScore = branchTechs.length 
-        ? Math.round(branchTechs.reduce((sum, t) => sum + safeNumber(t.overallEhsScore), 0) / branchTechs.length)
+      const avgContractorScore = contractorTechs.length 
+        ? Math.round(contractorTechs.reduce((sum, t) => sum + safeNumber(t.overallEhsScore), 0) / contractorTechs.length)
         : 0; // No crew assigned
       return {
         name: b.name,
         code: b.code,
-        score: avgBranchScore,
-        techCount: branchTechs.length
+        score: avgContractorScore,
+        techCount: contractorTechs.length
       };
     });
 
@@ -879,14 +880,14 @@ const ReportingView: React.FC<ReportingViewProps> = ({
     const csvRows = [
       headers.join(","),
       ...expiringDocsReport.map(doc => {
-        const docBranch = contractors.find(b => b.id === doc.contractorId)?.name || "N/A";
+        const docContractor = contractors.find(b => b.id === doc.contractorId)?.name || "N/A";
         const techProfile = technicians.find(t => t.id === doc.technicianId);
         const isExpired = doc.remainingDays < 0;
         const { label: urgencyLabel } = getUrgencyMeta(doc.remainingDays, isExpired);
         return [
           escapeCSV(doc.technicianName),
           escapeCSV(techProfile?.phone || ""),
-          escapeCSV(docBranch),
+          escapeCSV(docContractor),
           escapeCSV(doc.type),
           escapeCSV(doc.fileName),
           escapeCSV(doc.expiryDate),
@@ -899,13 +900,21 @@ const ReportingView: React.FC<ReportingViewProps> = ({
     downloadCSV("document_expiration_report", csvRows.join("\n"));
   };
 
+  /** Derive milestone status label from milestonesCount (avoids needing milestones fetch). */
+  const getMilestoneStatusFromCount = (mc: { total: number; completed: number } | undefined): string => {
+    if (!mc || mc.total === 0) return "Not Started";
+    if (mc.completed >= mc.total) return "Completed";
+    if (mc.completed > 0) return "In Progress";
+    return "Pending";
+  };
+
   // Safe Export to CSV handler for site clearance ledger
   const handleExportSiteClearanceCSV = () => {
     const headers = [
       "Project",
       "Partner",
-      "Current Milestone",
       "Milestone Status",
+      "Progress",
       "Safaricom Lead",
       "Safety Lead",
       "Avg Safety Score (%)",
@@ -929,20 +938,16 @@ const ReportingView: React.FC<ReportingViewProps> = ({
           ? getClearanceEvaluation(averageScore)
           : { status: "No crew" };
 
-        const projectMilestones = (milestones || []).filter(m => m.projectId === p.id);
-        let currentMilestone = projectMilestones.find(m => m.status === "In Progress" || m.status === "Blocked");
-        if (!currentMilestone) {
-          currentMilestone = projectMilestones.find(m => m.status === "Pending");
-        }
-        if (!currentMilestone && projectMilestones.length > 0) {
-          currentMilestone = projectMilestones[projectMilestones.length - 1];
-        }
+        const mc = p.milestonesCount;
+        const completed = mc?.completed ?? 0;
+        const progress = `${completed} / ${TOTAL_MILESTONES}`;
+        const milestoneStatus = getMilestoneStatusFromCount(mc);
 
         return [
           escapeCSV(p.name),
           escapeCSV(partnerName),
-          escapeCSV(currentMilestone ? currentMilestone.title : "Not Started"),
-          escapeCSV(currentMilestone ? currentMilestone.status : ""),
+          escapeCSV(milestoneStatus),
+          escapeCSV(progress),
           escapeCSV(leadName),
           escapeCSV(ehsOfficer),
           escapeCSV(averageScore),
@@ -957,8 +962,6 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
   // Safe Export to CSV handler for KPI grid data
   const handleExportKPICSV = () => {
-    const headers = ["Metric", "Value"];
-
     const rows = [
       ["Compliance Index", `${stats.avgScore}%`],
       ["Audit Approval Rate", `${stats.approvalRate}%`],
@@ -1007,7 +1010,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
   // Safe Print to PDF handler for high-risk unresolved flags
   const handlePrintHighRiskFlags = () => {
-    const branchName = activeContractorId === "all" 
+    const contractorName = activeContractorId === "all" 
       ? "Safaricom Unified Network (All Partners)" 
       : (contractors.find(b => b.id === activeContractorId)?.name || "Contractor");
 
@@ -1292,7 +1295,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
             <h2>Unified EHS & Compliance Operations</h2>
           </div>
           <div class="info-area">
-            <div>Scope: <strong>${branchName}</strong></div>
+            <div>Scope: <strong>${contractorName}</strong></div>
             <div>Generated: <strong>${dateStr}</strong></div>
             <div>Report Security: <strong>Safaricom Internal Strict Compliance</strong></div>
           </div>
@@ -1411,7 +1414,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
           <LabeledSelect
             label="Filter by Partner Contractor:"
             value={String(activeContractorId)}
-            onChange={(e) => setSelectedBranchId(e.target.value)}
+            onChange={(e) => setSelectedContractorId(e.target.value)}
             disabled={!isCentral}
           >
             <option value="all">Safaricom Unified Network (All Partners)</option>
@@ -1896,8 +1899,8 @@ const ReportingView: React.FC<ReportingViewProps> = ({
             <label className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 font-mono block">Hub Region presence:</label>
             {isCentral ? (
               <select
-                value={expirationBranchFilter}
-                onChange={(e) => setExpirationBranchFilter(e.target.value)}
+                value={expirationContractorFilter}
+                onChange={(e) => setExpirationContractorFilter(e.target.value)}
                 className="text-xs p-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg font-bold text-slate-700 dark:text-slate-200 outline-none w-full"
               >
                 <option value="all">Global Safaricom Network</option>
@@ -1930,7 +1933,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {expiringDocsReport.map((doc) => {
-                  const docBranch = contractors.find(b => b.id === doc.contractorId)?.name || "N/A";
+                  const docContractor = contractors.find(b => b.id === doc.contractorId)?.name || "N/A";
                   const techProfile = technicians.find(t => t.id === doc.technicianId);
 
                   return (
@@ -1938,7 +1941,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                       key={doc.id}
                       doc={doc}
                       phone={techProfile?.phone || ""}
-                      docBranch={docBranch}
+                      docContractor={docContractor}
                       isNotified={!!notifiedDocs[doc.id]}
                       onNotify={handleNotifyDoc}
                     />
@@ -2008,15 +2011,9 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                   ? Math.round(matchedTechs.reduce((sum, t) => sum + safeNumber(t.overallEhsScore), 0) / matchedTechs.length)
                   : 0;
 
-                const projectMilestones = (milestones || []).filter(m => m.projectId === p.id);
-                let currentMilestone = projectMilestones.find(m => m.status === "In Progress" || m.status === "Blocked");
-                if (!currentMilestone) {
-                  currentMilestone = projectMilestones.find(m => m.status === "Pending");
-                }
-                if (!currentMilestone && projectMilestones.length > 0) {
-                  currentMilestone = projectMilestones[projectMilestones.length - 1];
-                }
-                const currentMilestoneTitle = currentMilestone ? currentMilestone.title : "Not Started";
+                const mc = p.milestonesCount;
+                const currentMilestoneTitle = getMilestoneStatusFromCount(mc);
+                const currentMilestoneStatus = mc && mc.total > 0 ? currentMilestoneTitle : null;
 
                 return (
                   <SiteClearanceRow
@@ -2026,7 +2023,7 @@ const ReportingView: React.FC<ReportingViewProps> = ({
                     leadName={leadName}
                     ehsOfficer={ehsOfficer}
                     currentMilestoneTitle={currentMilestoneTitle}
-                    currentMilestoneStatus={currentMilestone ? currentMilestone.status : null}
+                    currentMilestoneStatus={currentMilestoneStatus}
                     averageScore={averageScore}
                     crewCount={matchedTechs.length}
                   />
@@ -2046,6 +2043,6 @@ const ReportingView: React.FC<ReportingViewProps> = ({
 
     </div>
   );
-};
+});
 
 export default ReportingView;

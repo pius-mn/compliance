@@ -3,7 +3,7 @@ import { Search, Shield, ChevronLeft, Check, X, AlertTriangle, History, Eye, Fil
 import { Role, User, Contractor, DocumentType, TechnicianDocument, TechnicianProfile } from "../types";
 import { PaginationControls } from "../components/PaginationControls";
 import { PhotoLightbox } from "../components/PhotoLightbox";
-import { getDocStatus } from "../utils/helpers";
+import { getDocStatus, getAuthFileUrl } from "../utils/helpers";
 
 export interface EhsViewProps {
   user: User | null;
@@ -45,7 +45,7 @@ export interface EhsViewProps {
   handleRejectDocument: (docId: string) => void;
   setExportingCertDoc: (doc: TechnicianDocument | null) => void;
   exportingCertDoc: TechnicianDocument | null;
-  filteredBranches: Contractor[];
+  filteredContractors: Contractor[];
   actionLoading: boolean;
   allDocumentTypes: DocumentType[];
 }
@@ -104,7 +104,7 @@ function getDocTypeName(docTypeId: number | null | undefined, allTypes: Document
   return found?.name || "";
 }
 
-export default function EhsView(props: EhsViewProps) {
+const EhsView = React.memo(function EhsView(props: EhsViewProps) {
   const {
     user,
     docSearch, setDocSearch,
@@ -172,8 +172,8 @@ export default function EhsView(props: EhsViewProps) {
               {/* Document Preview — prefer filesystem path over base64 */}
               {(() => {
                 const docFileSrc = selectedDoc.file_path
-                  ? `/api/v1/ehs/documents/${selectedDoc.id}/file`
-                  : selectedDoc.fileData || null;
+                  ? getAuthFileUrl(`/api/v1/ehs/documents/${selectedDoc.id}/file`)
+                  : (selectedDoc.fileData || null);
                 if (!docFileSrc) return null;
 
                 const isImage = selectedDoc.fileMimeType?.startsWith("image/") ||
@@ -368,4 +368,6 @@ export default function EhsView(props: EhsViewProps) {
       </div>
     </div>
   );
-}
+});
+
+export default EhsView;

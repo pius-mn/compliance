@@ -1,9 +1,9 @@
 import { runComplianceScan } from "../services/compliance_engine";
-import { enrichDocuments } from "../services/ehs";
-import { getTechnicians } from "../services/technicians";
-import { getAll, insert, update } from "./database";
+import { queryEnrichedDocuments } from "../services/ehs";
+import { getTechniciansForCompliance } from "../services/technicians";
+import { getAll, insert, update, query } from "./database";
 import { emitSSE } from "./sse";
-import { Role, ComplianceFlag, Project, TechnicianDocument, TechnicianProfile, User } from "../types";
+import { Role, ComplianceFlag, Project, TechnicianProfile } from "../types";
 
 function sendEmailNotification(to: string, subject: string, body: string) {
   console.log(`[Email Placeholder] To: ${to}, Subject: ${subject}, Body: ${body}`);
@@ -17,11 +17,12 @@ async function notifyContractorSafetyLeads(contractorId: number | null, subject:
 }
 
 async function getFlagContractorId(flag: ComplianceFlag): Promise<number | null> {
-  const [projects, documents, technicians] = await Promise.all([
+  const [projects, enrichedDocs, technicians] = await Promise.all([
     getAll<Record<string, unknown>>("projects"),
-    getAll<Record<string, unknown>>("documents"),
+    queryEnrichedDocuments(),
     getAll<Record<string, unknown>>("technicians"),
   ]);
+  const documents = enrichedDocs as unknown as Record<string, unknown>[];
   if (flag.targetType === "project") {
     const project = projects.find((p) => (p.id as number) === flag.targetId);
     return project ? (project.contractorId as number | null) : null;
@@ -88,6 +89,17 @@ async function applyScanResults(newFlags: ComplianceFlag[], updatedFlags: Compli
   return newFlags.length > 0 || updatedFlags.length > 0;
 }
 
+/** Parse the assignedTechnicianIds JSON column that query() returns as raw string. */
+function parseAssignedTechIds(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  return rows.map((r) => ({
+    ...r,
+    assignedTechnicianIds:
+      typeof r.assignedTechnicianIds === "string"
+        ? JSON.parse(r.assignedTechnicianIds as string)
+        : r.assignedTechnicianIds,
+  }));
+}
+
 let scannerStarted = false;
 
 export async function startComplianceScanner() {
@@ -95,54 +107,72 @@ export async function startComplianceScanner() {
   scannerStarted = true;
 
   try {
-    const [projects, documents, documentTypes, techs, users, existingFlags] = await Promise.all([
-      getAll<Project>("projects"),
-      getAll<TechnicianDocument>("documents"),
-      getAll<Record<string, unknown>>("documentTypes"),
-      getTechnicians(),
-      getAll<User>("users"),
-      getAll<ComplianceFlag>("complianceFlags"),
+    // ── Targeted column projections for the compliance scanner ────────
+    // Each getAll() call does SELECT * which transfers every column
+    // (including TEXT/JOB columns never examined by the engine).
+    // These queries project only the columns actually referenced in
+    // runComplianceScan() and applyScanResults().
+    const [rawProjects, techs, existingFlags, enrichedDocs] = await Promise.all([
+      query(`
+        SELECT id, name, status, endDate, contractorId,
+               assignedTechnicianIds, description
+        FROM projects
+      `),
+      getTechniciansForCompliance(),
+      query(`
+        SELECT id, targetId, targetType, targetName, standard,
+               ruleName, severity, status, description, flaggedAt,
+               resolvedAt, resolutionComments
+        FROM complianceFlags
+      `),
+      queryEnrichedDocuments(),
     ]);
+    const projects = parseAssignedTechIds(rawProjects);
 
-    const enrichedDocs = await enrichDocuments(
-      documents,
-      techs as Record<string, unknown>[],
-      documentTypes as Record<string, unknown>[],
+    const { newFlags, updatedFlags } = runComplianceScan(
+      projects as unknown as Project[],
+      enrichedDocs,
+      techs as unknown as TechnicianProfile[],
+      existingFlags as unknown as ComplianceFlag[]
     );
-
-    const technicians = techs as unknown as TechnicianProfile[];
-
-    const { newFlags, updatedFlags } = runComplianceScan(projects, enrichedDocs, technicians, users, existingFlags);
 
     const updated = await applyScanResults(newFlags, updatedFlags, true);
     
     if (updated) {
-      const updatedFlags_now = await getAll<ComplianceFlag>("complianceFlags");
-      console.log(`[Compliance Engine] Startup compliance sweep done. Active warnings: ${updatedFlags_now.filter((f: ComplianceFlag) => f.status === "Active").length}`);
+      const updatedFlags_now = await query(
+        "SELECT id, status FROM complianceFlags"
+      );
+      console.log(`[Compliance Engine] Startup compliance sweep done. Active warnings: ${(updatedFlags_now as unknown as ComplianceFlag[]).filter((f: ComplianceFlag) => f.status === "Active").length}`);
     }    } catch (err) {
       console.error("[Compliance Engine] Startup sweep failure:", err);
   }
 
   setInterval(async () => {
     try {
-      const [projects, documents, documentTypes, techs, users, existingFlags] = await Promise.all([
-        getAll<Project>("projects"),
-        getAll<TechnicianDocument>("documents"),
-        getAll<Record<string, unknown>>("documentTypes"),
-        getTechnicians(),
-        getAll<User>("users"),
-        getAll<ComplianceFlag>("complianceFlags"),
+      // ── Targeted column projections (same as startup) ───────────────
+      const [rawProjects, techs, existingFlags, enrichedDocs] = await Promise.all([
+        query(`
+          SELECT id, name, status, endDate, contractorId,
+                 assignedTechnicianIds, description
+          FROM projects
+        `),
+        getTechniciansForCompliance(),
+        query(`
+          SELECT id, targetId, targetType, targetName, standard,
+                 ruleName, severity, status, description, flaggedAt,
+                 resolvedAt, resolutionComments
+          FROM complianceFlags
+        `),
+        queryEnrichedDocuments(),
       ]);
+      const projects = parseAssignedTechIds(rawProjects);
 
-      const intervalEnriched = await enrichDocuments(
-        documents,
-        techs as Record<string, unknown>[],
-        documentTypes as Record<string, unknown>[],
+      const { newFlags, updatedFlags } = runComplianceScan(
+        projects as unknown as Project[],
+        enrichedDocs,
+        techs as unknown as TechnicianProfile[],
+        existingFlags as unknown as ComplianceFlag[]
       );
-
-      const technicians = techs as unknown as TechnicianProfile[];
-
-      const { newFlags, updatedFlags } = runComplianceScan(projects, intervalEnriched, technicians, users, existingFlags);
 
       const updated = await applyScanResults(newFlags, updatedFlags, false);
       if (updated) {

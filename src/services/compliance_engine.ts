@@ -3,14 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Project, TechnicianDocument, TechnicianProfile, User, ComplianceFlag } from "../types";
+import { Project, TechnicianDocument, TechnicianProfile, ComplianceFlag } from "../types";
 import { safeString } from "../utils/helpers";
-
-let flagCounter = 1;
-
-function nextFlagId(): number {
-  return flagCounter++;
-}
 
 /**
  * Runs a deterministic compliance scan over all active projects, technicians, and EHS documents.
@@ -21,7 +15,6 @@ export function runComplianceScan(
   projects: Project[],
   documents: TechnicianDocument[],
   technicians: TechnicianProfile[],
-  users: User[],
   existingFlags: ComplianceFlag[] = []
 ): { newFlags: ComplianceFlag[]; updatedFlags: ComplianceFlag[] } {
   const currentFlags: ComplianceFlag[] = [...existingFlags];
@@ -33,7 +26,7 @@ export function runComplianceScan(
 
   // 1. PROJECT TIMELINE COMPLIANCE (Regulatory / SLA timelines)
   // Standard: Safaricom Project Governance
-  const currentDate = new Date("2026-06-14T06:45:33-07:00"); // Standard alignment with local system metadata
+  const currentDate = new Date(); // Use actual current date/time for all compliance checks and timestamps
 
   projects.forEach((proj) => {
     if (proj.status !== "Completed" && proj.status !== "On Hold") {
@@ -46,7 +39,7 @@ export function runComplianceScan(
         const exists = currentFlags.find((f) => f.targetId === proj.id && f.ruleName === ruleName && f.status === "Active");
         if (!exists) {
           newFlags.push({
-            id: nextFlagId(),
+            id: 0,
             targetId: proj.id,
             targetType: "project",
             targetName: proj.name,
@@ -80,7 +73,7 @@ export function runComplianceScan(
           );
           if (!exists) {
             newFlags.push({
-              id: nextFlagId(),
+              id: 0,
               targetId: proj.id,
               targetType: "project",
               targetName: proj.name,
@@ -103,7 +96,7 @@ export function runComplianceScan(
           );
           if (!exists) {
             newFlags.push({
-              id: nextFlagId(),
+              id: 0,
               targetId: proj.id,
               targetType: "project",
               targetName: proj.name,
@@ -150,7 +143,7 @@ export function runComplianceScan(
           const exists = currentFlags.find((f) => f.targetId === proj.id && f.ruleName === ruleName && f.status === "Active");
           if (!exists) {
             newFlags.push({
-              id: nextFlagId(),
+              id: 0,
               targetId: proj.id,
               targetType: "project",
               targetName: proj.name,
@@ -175,7 +168,7 @@ export function runComplianceScan(
       let dateStr = "";
       try { dateStr = safeString(doc.expiryDate); } catch { dateStr = ""; }
       const expiry = new Date(dateStr + "T00:00:00");
-      const refDate = new Date("2026-06-14T00:00:00");
+      const refDate = new Date();
       isExpiredByDate = expiry.getTime() < refDate.getTime();
     }
 
@@ -191,7 +184,7 @@ export function runComplianceScan(
       const exists = currentFlags.find((f) => f.targetId === doc.id && f.ruleName === ruleName && f.status === "Active");
       if (!exists) {
         newFlags.push({
-          id: nextFlagId(),
+          id: 0,
           targetId: doc.id,
           targetType: "document",
           targetName: doc.fileName,
@@ -217,7 +210,7 @@ export function runComplianceScan(
       const exists = currentFlags.find((f) => f.targetId === doc.id && f.ruleName === ruleName && f.status === "Active");
       if (!exists) {
         newFlags.push({
-          id: nextFlagId(),
+          id: 0,
           targetId: doc.id,
           targetType: "document",
           targetName: doc.fileName,

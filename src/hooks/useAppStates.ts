@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import type {
   Role,
   User,
@@ -16,11 +16,30 @@ import type {
 } from "../types";
 
 export function useAppStates() {
-  // ── Core Persistent States ─────────────────────────────────────
+  // ── Synchronous dark mode guard (runs before first paint) ─────────
+  // Restore the dark class on <html> synchronously to prevent a flash of
+  // light mode on load.  This is done OUTSIDE React state so it doesn't
+  // affect hydration matching.
+  if (typeof window !== "undefined") {
+    const theme = localStorage.getItem("theme");
+    if (theme === "dark") {
+      document.documentElement.classList.add("dark");
+    }
+  }
+
+  // ── Core Persistent States ────────────────────────────────────────
+  // IMPORTANT: These are NOT lazy-initialized from localStorage — doing so
+  // would cause hydration mismatches because the server (no localStorage)
+  // would render different HTML than the client. Instead, they start with
+  // their default values and are restored from localStorage inside a
+  // useEffect (see hydration effect below).
   const [user, setUser] = useState<User | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Track whether the hydration effect has completed (first mount only)
+  const hydratedRef = useRef(false);
   const [isNotificationsDrawerOpen, setIsNotificationsDrawerOpen] = useState(false);
 
   // ── Reference / Master Data ────────────────────────────────────
@@ -120,26 +139,35 @@ export function useAppStates() {
   const [newDocumentType, setNewDocumentType] = useState({ name: "" });
   const [aiAnalysisResult, setAiAnalysisResult] = useState<Record<string, unknown> | null>(null);
 
-  // ── Hydration & Persistence ─────────────────────────────────────
+  // ── Hydration: restore persisted state from localStorage (runs once) ─────
+  // This runs AFTER the first render, so the server and client always produce
+  // matching HTML. The restored values are applied in a second render pass.
   useEffect(() => {
-    // Load saved data
+    const savedToken = localStorage.getItem("authToken");
     const savedUser = localStorage.getItem("user");
-    if (savedUser) {
-      const parsed = JSON.parse(savedUser);
-      setUser(parsed);
 
-      // Validate stored token against the server — if expired/invalid,
-      // clear the auth state so the login screen shows instead.
-      const savedToken = localStorage.getItem("authToken");
-      if (savedToken) {
-        setAuthToken(savedToken);
+    // Restore user (with corrupted-data guard)
+    if (savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser) as User;
+        setUser(parsed);
+      } catch {
+        localStorage.removeItem("user");
+      }
+    }
+
+    // Restore token + validate against server
+    if (savedToken) {
+      setAuthToken(savedToken);
+
+      if (savedUser) {
+        // Validate stored token — if expired/invalid, clear auth state.
         fetch("/api/v1/auth/me", {
           method: "POST",
           headers: { Authorization: `Bearer ${savedToken}` },
         })
           .then((res) => {
             if (!res.ok) {
-              // Token is invalid/expired — clear auth state
               localStorage.removeItem("user");
               localStorage.removeItem("authToken");
               setUser(null);
@@ -147,36 +175,38 @@ export function useAppStates() {
             }
           })
           .catch(() => {
-            // Network error — keep the cached user; they'll be logged out
-            // on the first actual API call that returns 401.
+            // Network error — keep cached auth; 401 on next API call will handle it
           });
-      } else {
-        // No token at all — can't authenticate
-        localStorage.removeItem("user");
-        setUser(null);
       }
+    } else if (savedUser) {
+      // No saved token but have cached user — stale data from a prior session.
+      localStorage.removeItem("user");
+      // setUser is already async via Promise microtask in React 19 batching
+      setUser(null);
     }
 
-    const savedToken = localStorage.getItem("authToken");
-    if (savedToken) {
-      setAuthToken(savedToken);
-    }
-
-    const savedTheme = localStorage.getItem("theme");
-    if (savedTheme === "dark") {
+    // Restore dark mode preference (class already applied synchronously
+    // above; this just syncs the React state so the UI re-renders).
+    const theme = localStorage.getItem("theme");
+    if (theme === "dark") {
       setIsDarkMode(true);
-      document.documentElement.classList.add("dark");
-    } else if (savedTheme === "light") {
-      document.documentElement.classList.remove("dark");
     }
 
-    if (window.innerWidth >= 1024) {
+    // Restore sidebar open state (desktop default)
+    if (typeof window !== "undefined" && window.innerWidth >= 1024) {
       setIsSidebarOpen(true);
     }
+
+    hydratedRef.current = true;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist dark mode
+  // Persist dark mode (skips the very first run — hydration effect above
+  // already restored the correct value synchronously, so the initial
+  // isDarkMode=false would incorrectly overwrite localStorage to "light").
   useEffect(() => {
+    if (!hydratedRef.current) return;
+
     if (isDarkMode) {
       localStorage.setItem("theme", "dark");
       document.documentElement.classList.add("dark");

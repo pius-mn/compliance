@@ -2,7 +2,8 @@ import React from "react";
 import { Project, Milestone } from "../types";
 import { safeJson, safeString } from "../utils/helpers";
 import { apiFetch, apiFetchJson } from "../utils/apiFetch";
-import type { CollectionKey } from "../utils/dataSync";
+import { TOTAL_MILESTONES } from "../lib/constants";
+
 
 interface ProjectActionStates {
   user: { id?: number | string; role?: string; contractorId?: number | string } | null;
@@ -29,8 +30,7 @@ interface ProjectActionStates {
 export function useProjectActions(
   states: ProjectActionStates,
   API_BASE: string,
-  triggerBannerAlert: (type: "success" | "error" | "info" | "warning", msg: string) => void,
-  refetchData: (collections: CollectionKey[]) => Promise<void>
+  triggerBannerAlert: (type: "success" | "error" | "info" | "warning", msg: string) => void
 ) {
   const {
     user,
@@ -53,6 +53,7 @@ export function useProjectActions(
     allUsers,
     contractors,
   } = states;
+
 
   const fetchMilestones = async (projId: number | string) => {
     try {
@@ -104,7 +105,6 @@ export function useProjectActions(
           rolloutDistance: ""
         });
         triggerBannerAlert("success", "Safaricom Project successfully tracked!");
-        refetchData(["projects", "milestones"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "An error occurred");
@@ -141,7 +141,6 @@ export function useProjectActions(
           dependencies: [],
         });
         triggerBannerAlert("success", "New safety milestone added!");
-        refetchData(["milestones"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "Failed to create milestone");
@@ -180,7 +179,6 @@ export function useProjectActions(
       if (res.ok) {
         triggerBannerAlert("success", `Marked milestone status as: ${status}`);
         if (selectedProjectId) fetchMilestones(selectedProjectId);
-        refetchData(["milestones"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "Unauthorized action or state block.");
@@ -206,7 +204,6 @@ export function useProjectActions(
       if (res.ok) {
         triggerBannerAlert("success", "Dependencies clearance updated!");
         if (selectedProjectId) await fetchMilestones(selectedProjectId);
-        refetchData(["milestones"]);
       } else {
         const errorText = await res.text();
         let err: Record<string, unknown>;
@@ -229,7 +226,6 @@ export function useProjectActions(
       });
       if (res.ok) {
         triggerBannerAlert("success", "Photo uploaded successfully!");
-        await refetchData(["sitePhotos"]);
       } else {
         const err = await res.json();
         let errMsg = "Unknown error";
@@ -251,7 +247,6 @@ export function useProjectActions(
       const data = await safeJson(res) as Record<string, unknown>;
       if (res.ok) {
         triggerBannerAlert("success", `Regulatory audit sweep finished! Detected ${data.newFlagsCount} new flags, resolved ${data.updatedFlagsCount} flags.`);
-        refetchData(["complianceFlags", "notifications", "auditLogs"]);
       } else {
         triggerBannerAlert("error", "Compliance scan failed.");
       }
@@ -273,7 +268,6 @@ export function useProjectActions(
       });
       if (res.ok) {
         triggerBannerAlert("success", "Compliance warning resolved and archived in audit logs.");
-        refetchData(["complianceFlags"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "Failed to resolve compliance flag.");
@@ -295,7 +289,6 @@ export function useProjectActions(
 
       if (res.ok) {
         triggerBannerAlert("success", "Project crew updated successfully.");
-        refetchData(["projects", "technicians"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "Failed to update project crew.");
@@ -316,7 +309,6 @@ export function useProjectActions(
 
       if (res.ok) {
         triggerBannerAlert("success", "Project updated successfully.");
-        refetchData(["projects"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "Failed to update project.");
@@ -338,7 +330,6 @@ export function useProjectActions(
       if (res.ok) {
         triggerBannerAlert("success", "Project deleted successfully.");
         setSelectedProjectId(null);
-        refetchData(["projects"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "Failed to delete project.");
@@ -367,7 +358,6 @@ export function useProjectActions(
 
       if (res.ok) {
         triggerBannerAlert("success", "Project assignment updated successfully.");
-        refetchData(["projects", "users"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "Failed to update project assignments.");
@@ -393,7 +383,6 @@ export function useProjectActions(
       if (res.ok) {
         triggerBannerAlert("success", "Milestone dependencies updated!");
         if (selectedProjectId) await fetchMilestones(selectedProjectId);
-        refetchData(["milestones"]);
       } else {
         const err = await safeJson(res) as Record<string, unknown>;
         triggerBannerAlert("error", (err?.error as string) || "Failed to update dependencies");
@@ -405,34 +394,45 @@ export function useProjectActions(
     }
   };
 
+  /** Derive milestone status label from milestonesCount (avoids needing allMilestones fetch). */
+  const getMilestoneStatusLabel = (mc: { total: number; completed: number } | undefined): string => {
+    if (!mc || mc.total === 0) return "Not Started";
+    if (mc.completed >= mc.total) return "Completed";
+    if (mc.completed > 0) return "In Progress";
+    return "Pending";
+  };
+
   const handleExportProjects = () => {
     if (!projects || projects.length === 0) {
       triggerBannerAlert("warning", "No projects to export.");
       return;
     }
     
-    // Prepare CSV data
-    const headers = ["ID", "Name", "Description", "Contractor", "Project Lead", "EHS Officer", "Start Date", "End Date", "Budget", "Rollout Distance", "Current Milestone"];
+    // Prepare CSV data — use milestonesCount from the API response instead of allMilestones
+    const headers = ["ID", "Name", "Description", "Contractor", "Project Lead", "EHS Officer", "Start Date", "End Date", "Budget", "Rollout Distance", "Progress", "Milestone Status"];
     const rows = projects.map((p: Project) => {
       const contractor = (contractors || []).find((c: Record<string, unknown>) => c.id === p.contractorId);
       const lead = (allUsers || []).find((u: Record<string, unknown>) => u.id === p.projectLeadId);
       const ehs = (allUsers || []).find((u: Record<string, unknown>) => u.id === p.ehsOfficerId);
       
-      const projectMilestones = allMilestones.filter((m: Milestone) => m.projectId === p.id);
-      const currentMilestone = projectMilestones.find((m: Milestone) => m.status === "In Progress") || projectMilestones.find((m: Milestone) => m.status === "Pending") || projectMilestones[0];
+      const mc = p.milestonesCount;
+      const completed = mc?.completed ?? 0;
+      const progress = `${completed} / ${TOTAL_MILESTONES}`;
+      const milestoneStatus = getMilestoneStatusLabel(mc);
 
       return [
         p.id,
         p.name,
         p.description,
-        contractor?.name || p.contractorId || "N/A",
-        lead?.name || p.projectLeadId || "N/A",
-        ehs?.name || p.ehsOfficerId || "N/A",
+        contractor?.name || "Unassigned",
+        lead?.name || "Unassigned",
+        ehs?.name || "Unassigned",
         p.startDate,
         p.endDate,
         p.budget,
         p.rolloutDistance,
-        currentMilestone?.title || "N/A"
+        progress,
+        milestoneStatus
       ];
     });
     
@@ -464,4 +464,5 @@ export function useProjectActions(
     handleDeleteProject,
     handleExportProjects
   };
+
 }

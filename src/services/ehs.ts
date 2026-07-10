@@ -1,5 +1,5 @@
 import { TechnicianDocument, User } from "../types";
-import { getAll, getById, getWhere, insert, update } from "../lib";
+import { getAll, getById, getWhere, insert, update, query } from "../lib";
 import { isTechnicianInUserHub } from "../lib/permissions";
 import { saveDocumentFile, moveToFinalPath, deleteDocumentFile } from "./documentStorage";
 
@@ -7,7 +7,44 @@ export function getTechnicianContractorId(tech: Record<string, unknown>): number
   return (tech.contractorId as number | null) || null;
 }
 
-/** Enrich documents with resolved technicianName and type from lookup tables. */
+/**
+ * Fetch all documents with technicianName and type resolved via SQL JOIN.
+ *
+ * Instead of loading ALL technicians and ALL documentTypes into memory and
+ * doing O(n*m) Array.find() lookups, this pushes the enrichment to the
+ * database where the new indexes (idx_documents_technician_id,
+ * idx_documents_document_type_id) make the JOINs O(log n).
+ */
+export async function queryEnrichedDocuments(): Promise<TechnicianDocument[]> {
+  const rows = await query(`
+    SELECT
+      d.id,
+      d.technicianId,
+      COALESCE(t.name, 'Unknown') AS technicianName,
+      d.contractorId,
+      COALESCE(dt.name, 'Unknown') AS type,
+      d.documentTypeId,
+      d.fileName,
+      d.uploadDate,
+      d.rejected,
+      d.contractorApproverId,
+      d.centralApproverId,
+      d.expiryDate,
+      d.file_path,
+      d.fileMimeType
+    FROM documents d
+    LEFT JOIN technicians t ON t.id = d.technicianId
+    LEFT JOIN documentTypes dt ON dt.id = d.documentTypeId
+  `);
+  return rows as unknown as TechnicianDocument[];
+}
+
+/**
+ * Enrich documents with resolved technicianName and type from lookup tables.
+ *
+ * @deprecated Use queryEnrichedDocuments() instead — it pushes the JOIN to SQL,
+ * avoiding full-table loads of technicians and documentTypes.
+ */
 export async function enrichDocuments(
   docs: TechnicianDocument[],
   technicians: Record<string, unknown>[],
@@ -93,12 +130,8 @@ async function notifyContractorSafetyLeads(contractorId: number | null, title: s
 }
 
 export async function getEHSDocuments(): Promise<TechnicianDocument[]> {
-  const [docs, technicians, documentTypes] = await Promise.all([
-    getAll<TechnicianDocument>("documents"),
-    getAll<Record<string, unknown>>("technicians"),
-    getAll<Record<string, unknown>>("documentTypes"),
-  ]);
-  return enrichDocuments(docs, technicians, documentTypes);
+  // Single JOIN query replaces 3 parallel SELECT * calls + O(n*m) in-memory find()
+  return queryEnrichedDocuments();
 }
 
 async function dbTechnicianIdCheck(id: number): Promise<number> {
@@ -122,6 +155,7 @@ export async function uploadEHSDocument(
     documentTypeId,
     expiryDate,
     fileBase64,
+    fileMimeType,
   } = payload;
 
   if (!technicianId || !fileName) {
@@ -210,6 +244,7 @@ export async function uploadEHSDocument(
       centralApproverId: null,
       expiryDate: expiryDate || null,
       file_path: filePath,
+      fileMimeType: fileMimeType || null,
     });
   } else {
     // No existing document — create new
@@ -224,6 +259,7 @@ export async function uploadEHSDocument(
       centralApproverId: null,
       expiryDate: expiryDate || null,
       file_path: null,
+      fileMimeType: fileMimeType || null,
     });
 
     // Move temp file to final path now that we have the docId
@@ -232,6 +268,10 @@ export async function uploadEHSDocument(
       await update("documents", docId, { file_path: filePath });
     }
   }
+
+  // Re-read file_path from DB so the returned object is always accurate
+  const savedDoc = await getById<Record<string, unknown>>("documents", docId);
+  const finalFilePath = savedDoc?.file_path as string | null;
 
   const newDoc: TechnicianDocument = {
     id: docId,
@@ -245,7 +285,10 @@ export async function uploadEHSDocument(
     rejected: false,
     contractorApproverId: null,
     centralApproverId: null,
-    expiryDate: expiryDate || null
+    expiryDate: expiryDate || null,
+    file_path: finalFilePath,
+    fileMimeType: fileMimeType || null,
+    fileData: null,
   };
 
   // If there's an AI compliance update, recalculate EHS overall scores

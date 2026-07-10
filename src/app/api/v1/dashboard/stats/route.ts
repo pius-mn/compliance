@@ -80,21 +80,21 @@ export async function GET(req: Request) {
       authorizedProjectIds.includes(m.projectId)
     );
 
-    // Compliance flags - compute branchId for each flag
+    // Compliance flags - compute contractorId for each flag
     const filteredFlags = activeContractorId
       ? complianceFlags.filter((flag) => {
-          let flagBranchId: number | null = null;
+          let flagContractorId: number | null = null;
           if (flag.targetType === "project") {
             const project = projects.find((p) => p.id === flag.targetId);
-            flagBranchId = project ? (project.contractorId as number) : null;
+            flagContractorId = project ? (project.contractorId as number) : null;
           } else if (flag.targetType === "document") {
             const doc = documents.find((d) => d.id === flag.targetId);
-            flagBranchId = doc ? doc.contractorId : null;
+            flagContractorId = doc ? doc.contractorId : null;
           } else if (flag.targetType === "technician") {
             const tech = technicians.find((t: Record<string, unknown>) => t.id === flag.targetId);
-            flagBranchId = tech ? ((tech.contractorId as number | null) || null) : null;
+            flagContractorId = tech ? ((tech.contractorId as number | null) || null) : null;
           }
-          return flagBranchId === activeContractorId;
+          return flagContractorId === activeContractorId;
         })
       : complianceFlags;
 
@@ -111,7 +111,7 @@ export async function GET(req: Request) {
     const documentStats = {
       total: filteredDocs.length,
       approved: filteredDocs.filter((d) => getDocStatus(d) === "Approved").length,
-      pendingBranch: filteredDocs.filter((d) => getDocStatus(d) === "Pending Contractor Approval").length,
+      pendingContractor: filteredDocs.filter((d) => getDocStatus(d) === "Pending Contractor Approval").length,
       pendingCentral: filteredDocs.filter((d) => getDocStatus(d) === "Pending Central Approval").length,
       rejected: filteredDocs.filter((d) => getDocStatus(d) === "Rejected").length,
     };

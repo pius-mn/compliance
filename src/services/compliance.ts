@@ -1,16 +1,16 @@
-import { Project, TechnicianDocument, TechnicianProfile, ComplianceFlag, User } from "../types";
+import { Project, TechnicianProfile, ComplianceFlag, User } from "../types";
 import { getAll, getById, getWhere, insert, update } from "../lib";
 import { runComplianceScan } from "./compliance_engine";
 import { getTechnicians } from "./technicians";
 import { emitSSE } from "../lib/sse";
 import { requireRole } from "../lib/permissions";
-import { enrichDocuments } from "./ehs";
+import { queryEnrichedDocuments } from "./ehs";
 
 export async function getComplianceFlags(): Promise<ComplianceFlag[]> {
   return await getAll<ComplianceFlag>("complianceFlags");
 }
 
-async function getFlagBranchId(flag: ComplianceFlag, flagProjects: Record<string, unknown>[], flagDocs: Record<string, unknown>[], flagTechs: Record<string, unknown>[]): Promise<number | null> {
+async function getFlagContractorId(flag: ComplianceFlag, flagProjects: Record<string, unknown>[], flagDocs: Record<string, unknown>[], flagTechs: Record<string, unknown>[]): Promise<number | null> {
   if (flag.targetType === "project") {
     const project = flagProjects.find((p) => p.id === flag.targetId);
     return project ? (project.contractorId as number | null) : null;
@@ -45,26 +45,21 @@ async function notifyContractorSafetyLeads(contractorId: number | null, title: s
 export async function triggerManualScan(currentUser: User): Promise<ComplianceFlag[]> {
   requireRole(currentUser, ["Safaricom Admin", "Safaricom EHS Officer"], "Only Safaricom Admins or central EHS Officers can manually trigger compliance audits.");
 
-  const [projects, documents, documentTypes, techs, users, existingFlags] = await Promise.all([
+  const [projects, techs, existingFlags, enrichedDocs] = await Promise.all([
     getAll("projects"),
-    getAll("documents"),
-    getAll("documentTypes"),
     getTechnicians(),
-    getAll("users"),
     getAll("complianceFlags"),
+    // Single JOIN query — replaces getAll('documents') + getAll('documentTypes') + enrichDocuments()
+    queryEnrichedDocuments(),
   ]);
 
-  const enrichedDocs = await enrichDocuments(
-    documents as unknown as TechnicianDocument[],
-    techs as unknown as Record<string, unknown>[],
-    documentTypes as unknown as Record<string, unknown>[],
-  );
+  // getFlagContractorId still needs raw records — use enriched docs which carry contractorId
+  const docs = enrichedDocs as unknown as Record<string, unknown>[];
 
   const { newFlags, updatedFlags } = runComplianceScan(
     projects as unknown as Project[],
     enrichedDocs,
     techs as unknown as TechnicianProfile[],
-    users as unknown as User[],
     existingFlags as unknown as ComplianceFlag[]
   );
 
@@ -77,8 +72,8 @@ export async function triggerManualScan(currentUser: User): Promise<ComplianceFl
       await insert("complianceFlags", f as unknown as Record<string, unknown>);
       
       if (f.severity === "High") {
-        const branchId = await getFlagBranchId(f, projects, documents, techs);
-        await notifyContractorSafetyLeads(branchId, "🚨 High Severity Compliance Flag Generated", details);
+        const contractorId = await getFlagContractorId(f, projects, docs, techs);
+        await notifyContractorSafetyLeads(contractorId, "🚨 High Severity Compliance Flag Generated", details);
       }
 
       await insert("notifications", {
@@ -149,13 +144,14 @@ export async function resolveComplianceFlag(
   }
 
   if (!currentUser.isCentral) {
-    const [projects, documents, technicians] = await Promise.all([
+    const [projects, enrichedDocs, technicians] = await Promise.all([
       getAll("projects"),
-      getAll("documents"),
+      queryEnrichedDocuments(),
       getAll("technicians"),
     ]);
-    const flagBranchId = await getFlagBranchId(flag, projects, documents, technicians);
-    if (flagBranchId && flagBranchId !== currentUser.contractorId) {
+    const docs = enrichedDocs as unknown as Record<string, unknown>[];
+    const flagContractorId = await getFlagContractorId(flag, projects, docs, technicians);
+    if (flagContractorId && flagContractorId !== currentUser.contractorId) {
       throw new Error("Permission denied. You can only resolve compliance flags for your own contractor.");
     }
   }

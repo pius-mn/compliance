@@ -5,8 +5,21 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2, Eye, ChevronDown } from "lucide-react";
 import { TechnicianDocument, Notification, User, Contractor } from "../types";
 import { safeString } from "../utils/helpers";
-import type { DashboardStatsResponse } from "../utils/dataSync";
 import { isSafaricomRole, isTechnician as isTechnicianRole } from "../lib/roles";
+
+// Dashboard stats shape returned by the server
+export interface DashboardStatsResponse {
+  user: { id: string; name: string; role: string; isSafaricom: boolean; isContractor: boolean; contractorId: string | null };
+  contractorFilter: string | null;
+  contractorName: string | null;
+  projectStats: { total: number; completed: number; inProgress: number; planning: number; onHold: number; totalBudget: number };
+  documentStats: { total: number; approved: number; pendingContractor: number; pendingCentral: number; rejected: number };
+  technicianStats: { total: number; active: number; warningNeeded: number; avgScore: number };
+  milestoneStats: { total: number; completed: number; inProgress: number; pending: number; blocked: number; completionRate: number };
+  complianceStats: { total: number; active: number; resolved: number; highSeverity: number; mediumSeverity: number; lowSeverity: number };
+  complianceTrend: Array<{ month: string; created: number; resolved: number }>;
+  milestoneCompletedTrend: Array<{ month: string; created: number; resolved: number }>;
+}
 import {
   ResponsiveContainer,
   BarChart, Bar, LineChart, Line,
@@ -238,7 +251,7 @@ function WorkflowStep({ step }: { step: WorkflowStepData }) {
   );
 }
 
-const DashboardView: React.FC<DashboardViewProps> = ({
+const DashboardView: React.FC<DashboardViewProps> = React.memo(function DashboardView({
   user,
   dashboardStats,
   pendingDocuments = [],
@@ -248,7 +261,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   contractors = [],
   selectedContractorId,
   onContractorChange,
-}) => {
+}) {
   // Defer chart rendering until container has actual dimensions
   const chartRef = React.useRef<HTMLDivElement>(null);
   const [chartsReady, setChartsReady] = React.useState(false);
@@ -291,7 +304,7 @@ const DashboardView: React.FC<DashboardViewProps> = ({
   const techCount = dashboardStats?.technicianStats.total ?? 0;
   const avgScore = dashboardStats?.technicianStats.avgScore ?? 100;
   const pendingCount =
-    (dashboardStats?.documentStats.pendingBranch ?? 0) +
+    (dashboardStats?.documentStats.pendingContractor ?? 0) +
     (dashboardStats?.documentStats.pendingCentral ?? 0);
   const totalDocCount = dashboardStats?.documentStats.total ?? 0;
 
@@ -571,6 +584,6 @@ const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
     </div>
   );
-};
+});
 
 export default DashboardView;

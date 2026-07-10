@@ -147,6 +147,22 @@ export function getDocStatus(doc: {
   return "Pending Contractor Approval";
 }
 
+/**
+ * Build an authenticated URL for serving document files.
+ *
+ * The file-serving API route requires JWT auth, but browser-native elements
+ * (<img>, <a download>) cannot send custom Authorization headers.  This
+ * helper appends the stored auth token as a query parameter so the server's
+ * fallback auth mechanism (?token=) can authenticate the request.
+ */
+export function getAuthFileUrl(basePath: string): string {
+  if (typeof window === "undefined") return basePath;
+  const token = localStorage.getItem("authToken");
+  if (!token) return basePath;
+  const separator = basePath.includes("?") ? "&" : "?";
+  return `${basePath}${separator}token=${encodeURIComponent(token)}`;
+}
+
 export function computeTechnicianEhsScore(
   techId: number,
   workRoleIds: number[] | undefined,

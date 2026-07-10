@@ -212,6 +212,274 @@ const MIGRATIONS: Migration[] = [
       "INSERT INTO appSettings (settingKey, settingValue, updatedAt) SELECT 'aiScoreThreshold', '50', NOW() WHERE NOT EXISTS (SELECT 1 FROM appSettings WHERE settingKey = 'aiScoreThreshold')",
     ],
   },
+  {
+    name: "add_more_indexes",
+    description: "Add additional database indexes for commonly-queried composite patterns missed in the first pass",
+    fn: async (p: mysql.Pool) => {
+      const indexes = [
+        // users(contractorId, role) — used across 3 files for safety lead lookups
+        // WHERE contractorId = ? AND role = ?
+        { table: "users",        name: "idx_users_contractor_role",     columns: "(contractorId, role(100))" },
+
+        // appSettings(settingKey) — unique lookup for config values
+        // WHERE settingKey = ? LIMIT 1
+        // Uses UNIQUE to enforce key uniqueness at the DB level
+        // CREATE UNIQUE INDEX requires the same information_schema check
+        { table: "appSettings",  name: "idx_app_settings_key",         columns: "(settingKey(255))", unique: true },
+
+        // milestones(projectId, status) — composite for completion counting
+        // WHERE projectId = ?  (then filter by status = 'Completed')
+        { table: "milestones",   name: "idx_milestones_project_status", columns: "(projectId, status(50))" },
+
+        // documents(technicianId, documentTypeId) — composite for duplicate check
+        // WHERE technicianId = ? AND documentTypeId = ? AND rejected = FALSE
+        { table: "documents",    name: "idx_documents_tech_doc_type",   columns: "(technicianId, documentTypeId)" },
+
+        // auditLogs(category) — used in audit trail filtering
+        // WHERE category = ?
+        { table: "auditLogs",    name: "idx_audit_logs_category",       columns: "(category(50))" },
+
+        // auditLogs(action) — used in audit trail filtering
+        // WHERE action = ?
+        { table: "auditLogs",    name: "idx_audit_logs_action",         columns: "(action(100))" },
+
+        // contractors(status) — used for filtering by Active/Suspended/Pending Review
+        // WHERE status = ?
+        { table: "contractors",  name: "idx_contractors_status",        columns: "(status(50))" },
+
+        // sitePhotos(uploadedByUserId) — used for looking up photos by uploader
+        // WHERE uploadedByUserId = ?
+        { table: "sitePhotos",   name: "idx_site_photos_uploaded_by",   columns: "(uploadedByUserId)" },
+
+        // complianceFlags(standard) — used in API filtering
+        // WHERE standard = ?
+        { table: "complianceFlags", name: "idx_compliance_flags_standard", columns: "(standard(50))" },
+
+        // complianceFlags(flaggedAt) — used for trend analysis and date-range queries
+        // WHERE flaggedAt > ?
+        // Prefix 25 covers the full ISO 8601 timestamp (e.g. "2026-06-14T06:45:33-07:00")
+        { table: "complianceFlags", name: "idx_compliance_flags_flagged_at", columns: "(flaggedAt(25))" },
+      ];
+
+      for (const idx of indexes) {
+        try {
+          const [existingIdx] = await p.query(
+            `SELECT COUNT(*) AS cnt FROM information_schema.statistics
+             WHERE table_schema = DATABASE()
+               AND table_name = ?
+               AND index_name = ?`,
+            [idx.table, idx.name]
+          ) as [Record<string, unknown>[], unknown];
+          const exists = Number((existingIdx[0] as Record<string, unknown>)?.cnt ?? 0) > 0;
+
+          if (!exists) {
+            const create = idx.unique ? "CREATE UNIQUE INDEX" : "CREATE INDEX";
+            await p.query(`${create} \`${idx.name}\` ON \`${idx.table}\` ${idx.columns}`);
+          }
+        } catch (err) {
+          console.warn(`  ↪ [INDEX SKIP] ${idx.name} — ${(err as Error).message}`);
+        }
+      }
+    },
+  },
+  {
+    name: "add_foreign_keys_and_indexes",
+    description: "Add foreign key constraints and database indexes for referential integrity and query performance",
+    fn: async (p: mysql.Pool) => {
+      // ── FOREIGN KEY CONSTRAINTS ──────────────────────────────────────────
+      // Each constraint is wrapped in try/catch because existing data may
+      // contain orphaned references (which will cause the FK to fail).
+      // A future data-cleanup pass should remove orphaned rows first.
+      const fkStatements = [
+        // users
+        `ALTER TABLE users ADD CONSTRAINT fk_users_contractor
+         FOREIGN KEY (contractorId) REFERENCES contractors(id)
+         ON DELETE SET NULL ON UPDATE CASCADE`,
+
+        // technicians
+        `ALTER TABLE technicians ADD CONSTRAINT fk_technicians_user
+         FOREIGN KEY (userId) REFERENCES users(id)
+         ON DELETE CASCADE ON UPDATE CASCADE`,
+        `ALTER TABLE technicians ADD CONSTRAINT fk_technicians_contractor
+         FOREIGN KEY (contractorId) REFERENCES contractors(id)
+         ON DELETE SET NULL ON UPDATE CASCADE`,
+
+        // projects
+        `ALTER TABLE projects ADD CONSTRAINT fk_projects_contractor
+         FOREIGN KEY (contractorId) REFERENCES contractors(id)
+         ON DELETE RESTRICT ON UPDATE CASCADE`,
+        `ALTER TABLE projects ADD CONSTRAINT fk_projects_lead
+         FOREIGN KEY (projectLeadId) REFERENCES users(id)
+         ON DELETE SET NULL ON UPDATE CASCADE`,
+        `ALTER TABLE projects ADD CONSTRAINT fk_projects_ehs_officer
+         FOREIGN KEY (ehsOfficerId) REFERENCES users(id)
+         ON DELETE SET NULL ON UPDATE CASCADE`,
+
+        // milestones
+        `ALTER TABLE milestones ADD CONSTRAINT fk_milestones_project
+         FOREIGN KEY (projectId) REFERENCES projects(id)
+         ON DELETE CASCADE ON UPDATE CASCADE`,
+
+        // documents
+        `ALTER TABLE documents ADD CONSTRAINT fk_documents_technician
+         FOREIGN KEY (technicianId) REFERENCES technicians(id)
+         ON DELETE CASCADE ON UPDATE CASCADE`,
+        `ALTER TABLE documents ADD CONSTRAINT fk_documents_contractor
+         FOREIGN KEY (contractorId) REFERENCES contractors(id)
+         ON DELETE RESTRICT ON UPDATE CASCADE`,
+        `ALTER TABLE documents ADD CONSTRAINT fk_documents_doc_type
+         FOREIGN KEY (documentTypeId) REFERENCES documentTypes(id)
+         ON DELETE SET NULL ON UPDATE CASCADE`,
+        `ALTER TABLE documents ADD CONSTRAINT fk_documents_contractor_approver
+         FOREIGN KEY (contractorApproverId) REFERENCES users(id)
+         ON DELETE SET NULL ON UPDATE CASCADE`,
+        `ALTER TABLE documents ADD CONSTRAINT fk_documents_central_approver
+         FOREIGN KEY (centralApproverId) REFERENCES users(id)
+         ON DELETE SET NULL ON UPDATE CASCADE`,
+
+        // auditLogs
+        `ALTER TABLE auditLogs ADD CONSTRAINT fk_audit_logs_user
+         FOREIGN KEY (userId) REFERENCES users(id)
+         ON DELETE SET NULL ON UPDATE CASCADE`,
+        `ALTER TABLE auditLogs ADD CONSTRAINT fk_audit_logs_contractor
+         FOREIGN KEY (contractorId) REFERENCES contractors(id)
+         ON DELETE SET NULL ON UPDATE CASCADE`,
+
+        // notifications
+        `ALTER TABLE notifications ADD CONSTRAINT fk_notifications_user
+         FOREIGN KEY (userId) REFERENCES users(id)
+         ON DELETE CASCADE ON UPDATE CASCADE`,
+        `ALTER TABLE notifications ADD CONSTRAINT fk_notifications_contractor
+         FOREIGN KEY (contractorId) REFERENCES contractors(id)
+         ON DELETE CASCADE ON UPDATE CASCADE`,
+
+        // sitePhotos
+        `ALTER TABLE sitePhotos ADD CONSTRAINT fk_site_photos_project
+         FOREIGN KEY (projectId) REFERENCES projects(id)
+         ON DELETE CASCADE ON UPDATE CASCADE`,
+        `ALTER TABLE sitePhotos ADD CONSTRAINT fk_site_photos_user
+         FOREIGN KEY (uploadedByUserId) REFERENCES users(id)
+         ON DELETE CASCADE ON UPDATE CASCADE`,
+        `ALTER TABLE sitePhotos ADD CONSTRAINT fk_site_photos_contractor
+         FOREIGN KEY (contractorId) REFERENCES contractors(id)
+         ON DELETE RESTRICT ON UPDATE CASCADE`,
+
+        // dailyNotes
+        `ALTER TABLE dailyNotes ADD CONSTRAINT fk_daily_notes_project
+         FOREIGN KEY (projectId) REFERENCES projects(id)
+         ON DELETE CASCADE ON UPDATE CASCADE`,
+
+        // contractors (self-referencing via user FK)
+        `ALTER TABLE contractors ADD CONSTRAINT fk_contractors_ehs_officer
+         FOREIGN KEY (ehsOfficerId) REFERENCES users(id)
+         ON DELETE SET NULL ON UPDATE CASCADE`,
+        `ALTER TABLE contractors ADD CONSTRAINT fk_contractors_manager
+         FOREIGN KEY (managerId) REFERENCES users(id)
+         ON DELETE SET NULL ON UPDATE CASCADE`,
+      ];
+
+      for (const stmt of fkStatements) {
+        try {
+          await p.query(stmt);
+        } catch (err) {
+          // FK creation may fail if existing data has orphaned references.
+          // Log a warning so operators are aware, but don't block startup.
+          const shortName = stmt.match(/ADD CONSTRAINT (\S+)/)?.[1] || "unknown";
+          console.warn(`  ↪ [FK SKIP] ${shortName} — ${(err as Error).message}`);
+        }
+      }
+
+      // ── DATABASE INDEXES ────────────────────────────────────────────────
+      // Indexes are added with IF NOT EXISTS (via a check against
+      // information_schema) so they are idempotent.
+      const indexes = [
+        // users
+        { table: "users",        name: "idx_users_contractor_id",   columns: "(contractorId)" },
+        { table: "users",        name: "idx_users_email",          columns: "(email(255))" },
+        { table: "users",        name: "idx_users_role",           columns: "(role(100))" },
+
+        // technicians
+        { table: "technicians",  name: "idx_technicians_contractor_id", columns: "(contractorId)" },
+        { table: "technicians",  name: "idx_technicians_user_id",       columns: "(userId)" },
+        { table: "technicians",  name: "idx_technicians_status",        columns: "(status(50))" },
+
+        // projects
+        { table: "projects",     name: "idx_projects_contractor_id", columns: "(contractorId)" },
+        { table: "projects",     name: "idx_projects_status",        columns: "(status(50))" },
+
+        // milestones
+        { table: "milestones",   name: "idx_milestones_project_id", columns: "(projectId)" },
+        { table: "milestones",   name: "idx_milestones_status",     columns: "(status(50))" },
+
+        // documents
+        { table: "documents",    name: "idx_documents_technician_id",       columns: "(technicianId)" },
+        { table: "documents",    name: "idx_documents_contractor_id",        columns: "(contractorId)" },
+        { table: "documents",    name: "idx_documents_document_type_id",     columns: "(documentTypeId)" },
+        { table: "documents",    name: "idx_documents_contractor_approver",  columns: "(contractorApproverId)" },
+        { table: "documents",    name: "idx_documents_central_approver",     columns: "(centralApproverId)" },
+        { table: "documents",    name: "idx_documents_status_lookup",        columns: "(rejected, contractorApproverId, centralApproverId)" },
+
+        // auditLogs
+        { table: "auditLogs",    name: "idx_audit_logs_contractor_id", columns: "(contractorId)" },
+        { table: "auditLogs",    name: "idx_audit_logs_user_id",        columns: "(userId)" },
+        { table: "auditLogs",    name: "idx_audit_logs_timestamp",      columns: "(timestamp(20))" },
+
+        // notifications
+        { table: "notifications", name: "idx_notifications_contractor_id", columns: "(contractorId)" },
+        { table: "notifications", name: "idx_notifications_user_id",        columns: "(userId)" },
+        { table: "notifications", name: "idx_notifications_read",           columns: "(`read`)" },
+
+        // complianceFlags
+        { table: "complianceFlags", name: "idx_compliance_flags_target",   columns: "(targetType(50), targetId)" },
+        { table: "complianceFlags", name: "idx_compliance_flags_severity", columns: "(severity(20))" },
+        { table: "complianceFlags", name: "idx_compliance_flags_status",   columns: "(status(20))" },
+
+        // sitePhotos
+        { table: "sitePhotos",   name: "idx_site_photos_project_id", columns: "(projectId)" },
+
+        // dailyNotes
+        { table: "dailyNotes",   name: "idx_daily_notes_project_date", columns: "(projectId, date(20))" },
+
+        // contractors
+        { table: "contractors",  name: "idx_contractors_ehs_officer_id", columns: "(ehsOfficerId)" },
+        { table: "contractors",  name: "idx_contractors_manager_id",      columns: "(managerId)" },
+      ];
+
+      for (const idx of indexes) {
+        try {
+          // Check if the index already exists
+          const [existingIdx] = await p.query(
+            `SELECT COUNT(*) AS cnt FROM information_schema.statistics
+             WHERE table_schema = DATABASE()
+               AND table_name = ?
+               AND index_name = ?`,
+            [idx.table, idx.name]
+          ) as [Record<string, unknown>[], unknown];
+          const exists = Number((existingIdx[0] as Record<string, unknown>)?.cnt ?? 0) > 0;
+
+          if (!exists) {
+            await p.query(`CREATE INDEX \`${idx.name}\` ON \`${idx.table}\` ${idx.columns}`);
+          }
+        } catch (err) {
+          console.warn(`  ↪ [INDEX SKIP] ${idx.name} — ${(err as Error).message}`);
+        }
+      }
+    },
+  },
+  {
+    name: "reset_milestones_count_total",
+    description: "Set milestonesCount.total to 0 for all existing projects (total is now a client-side constant)",
+    sql: [
+      "UPDATE projects SET milestonesCount = JSON_SET(milestonesCount, '$.total', 0)",
+    ],
+  },
+  {
+    name: "add_document_file_mime_type",
+    description: "Add fileMimeType column to documents table so preview components know file type without guessing from extension",
+    sql: [
+      "ALTER TABLE documents ADD COLUMN fileMimeType TEXT NULL AFTER file_path",
+    ],
+  },
 ];
 
 async function runMigrations(p: mysql.Pool): Promise<void> {

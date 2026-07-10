@@ -1,5 +1,5 @@
-import React, { useState, useCallback, useMemo } from "react";
-import { User, TechnicianProfile, TechnicianDocument, WorkRole, Role, DocumentType, Contractor } from "../types";
+import React, { useState, useCallback, useMemo, useEffect } from "react";
+import { User, TechnicianProfile, TechnicianDocument, WorkRole, Role, DocumentType } from "../types";
 import { TechnicianDetails } from "../components/TechnicianDetailsModal";
 import { AddTechnicianForm } from "../components/AddTechnicianModal";
 import {
@@ -22,10 +22,8 @@ interface TechniciansViewProps {
   user: User | null;
   technicians: TechnicianProfile[];
   filteredTechnicians: TechnicianProfile[];
-  techsTotal: number;
   techSearch: string;
   setTechSearch: React.Dispatch<React.SetStateAction<string>>;
-  contractors: Contractor[];
   documents: TechnicianDocument[];
   onUpload: (technicianId: number | string, docTypeName?: string) => void;
   onAddTechnician: (tech: { name: string; email: string; phone: string; specialization: string }) => Promise<void>;
@@ -269,15 +267,11 @@ const TechnicianRow = React.memo(function TechnicianRow({
   );
 });
 
-export const TechniciansView: React.FC<TechniciansViewProps> = ({
+const TechniciansViewInner: React.FC<TechniciansViewProps> = ({
   user,
   filteredTechnicians,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  techsTotal,
   techSearch,
   setTechSearch,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  contractors,
   documents,
   onUpload,
   onAddTechnician,
@@ -288,8 +282,13 @@ export const TechniciansView: React.FC<TechniciansViewProps> = ({
   allDocumentTypes,
   onUpdateTechnicianRoles,
 }) => {
-  // Client-side current time to avoid SSR hydration mismatches from new Date()
-  const [currentTime] = useState(() => Date.now());
+  // Client-side current time — starts at sentinel (prevents SSR/CSR mismatch)
+  // then set to actual Date.now() after hydration via useEffect.
+  const [currentTime, setCurrentTime] = useState(0);
+
+  useEffect(() => {
+    setCurrentTime(Date.now());
+  }, []);
 
   const [selectedTechnician, setSelectedTechnician] = useState<TechnicianProfile | null>(null);
   const [showAddTech, setShowAddTech] = useState(false);
@@ -587,3 +586,5 @@ export const TechniciansView: React.FC<TechniciansViewProps> = ({
     </div>
   );
 };
+
+export const TechniciansView = React.memo(TechniciansViewInner);

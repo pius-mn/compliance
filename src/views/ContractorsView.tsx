@@ -1,14 +1,12 @@
 import React, { useState } from "react";
 import { User, Contractor, Role } from "../types";
 import { Building2, Search, Phone, Mail, Plus, Edit2, Trash2, X } from "lucide-react";
-import type { CollectionKey } from "../utils/dataSync";
 import { PaginationControls } from "../components/PaginationControls";
 
 export interface ContractorsViewProps {
   user: User | null;
   contractors: Contractor[];
   triggerBannerAlert?: (type: "success" | "error" | "info" | "warning", msg: string) => void;
-  refetchData?: (collections: CollectionKey[]) => Promise<void>;
 }
 
 const ITEMS_PER_PAGE = 10;
@@ -70,7 +68,7 @@ function StatusBadge({ status }: { status?: string }) {
   );
 }
 
-export default function ContractorsView({ user, contractors, triggerBannerAlert, refetchData }: ContractorsViewProps) {
+const ContractorsView = React.memo(function ContractorsView({ user, contractors, triggerBannerAlert }: ContractorsViewProps) {
   const [search, setSearch] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -115,7 +113,6 @@ export default function ContractorsView({ user, contractors, triggerBannerAlert,
     try {
       await action();
       triggerBannerAlert?.("success", successMsg);
-      await refetchData?.(["contractors"]);
     } catch (err) {
       triggerBannerAlert?.("error", (err as { message?: string }).message || "An error occurred");
     }
@@ -384,4 +381,6 @@ export default function ContractorsView({ user, contractors, triggerBannerAlert,
       )}
     </div>
   );
-}
+});
+
+export default ContractorsView;

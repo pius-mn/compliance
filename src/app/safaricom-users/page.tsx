@@ -54,7 +54,7 @@ export default function SafaricomUsersPage() {
   // Reset to page 1 when search or role filter changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [search, roleFilter]);
+  }, [search, roleFilter, setCurrentPage]);
 
   const handleCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
